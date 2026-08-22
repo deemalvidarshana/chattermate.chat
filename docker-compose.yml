@@ -184,8 +184,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    ports:
-      - "5432:5432"
     environment:
       - POSTGRES_DB=chattermate
       - POSTGRES_USER=postgres
@@ -203,8 +201,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
