@@ -68,6 +68,14 @@ describe('PWA update prompt', () => {
       configurable: true,
       writable: true,
     })
+
+    Object.defineProperty(window, 'caches', {
+      value: {
+        keys: vi.fn().mockResolvedValue([]),
+        delete: vi.fn().mockResolvedValue(true),
+      },
+      configurable: true,
+    })
   })
 
   afterEach(() => {
@@ -113,5 +121,27 @@ describe('PWA update prompt', () => {
     onClick()
 
     expect(mocks.toast.dismiss).toHaveBeenCalledWith('toast-id')
+  })
+
+  it('removes a stale production worker instead of registering PWA in localhost dev', async () => {
+    const unregister = vi.fn().mockResolvedValue(true)
+    vi.mocked(navigator.serviceWorker.getRegistrations).mockResolvedValue([
+      { unregister } as unknown as ServiceWorkerRegistration,
+    ])
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', pathname: '/', reload },
+      configurable: true,
+      writable: true,
+    })
+    vi.mocked(window.caches.keys).mockResolvedValue(['workbox-precache-v1', 'unrelated-cache'])
+
+    const { setupPWA } = await import('@/pwa/register')
+    setupPWA()
+
+    await vi.waitFor(() => expect(unregister).toHaveBeenCalled())
+    expect(window.caches.delete).toHaveBeenCalledWith('workbox-precache-v1')
+    expect(window.caches.delete).not.toHaveBeenCalledWith('unrelated-cache')
+    expect(mocks.registerSW).not.toHaveBeenCalled()
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 })

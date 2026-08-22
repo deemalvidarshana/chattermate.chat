@@ -34,6 +34,7 @@ export interface AIConfig {
   model_type: string
   model_name: string
   is_active: boolean
+  has_api_key: boolean
   settings: Record<string, unknown>
 }
 

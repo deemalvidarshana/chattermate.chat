@@ -132,6 +132,7 @@ describe('LoginView', () => {
     expect(wrapper.find('input[type="email"]').exists()).toBe(true)
     expect(wrapper.find('input[type="password"]').exists()).toBe(true)
     expect(wrapper.find('button[type="submit"]').exists()).toBe(true)
+    expect(wrapper.find('.signup-prompt').text()).toContain("Don't have an account?")
   })
 
   it('updates email and password inputs', async () => {
@@ -243,4 +244,4 @@ describe('LoginView', () => {
     
     expect(router.currentRoute.value.path).toBe('/settings/user')
   })
-}) 
+})

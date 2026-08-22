@@ -79,6 +79,35 @@ export default defineConfig(({ command, mode }) => {
         )
       }
     },
+    {
+      // A production PWA may have been installed for localhost before the dev
+      // server was started. With devOptions disabled that old worker otherwise
+      // keeps serving its cached app shell after every normal refresh, hiding
+      // current source changes. Give the browser an explicit self-destructing
+      // update at the production worker URL; this plugin only runs in `serve`.
+      name: 'dev-service-worker-cleanup',
+      apply: 'serve',
+      configureServer(server) {
+        server.middlewares.use((request, response, next) => {
+          if (request.url?.split('?')[0] !== '/sw.js') return next()
+
+          response.statusCode = 200
+          response.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+          response.setHeader('Cache-Control', 'no-store, max-age=0')
+          response.setHeader('Service-Worker-Allowed', '/')
+          response.end(`
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    await self.registration.unregister()
+    const windows = await self.clients.matchAll({ type: 'window' })
+    for (const windowClient of windows) await windowClient.navigate(windowClient.url)
+  })())
+})
+`)
+        })
+      },
+    },
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src',

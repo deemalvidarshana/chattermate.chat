@@ -27,6 +27,7 @@ from uuid import UUID
 
 from app.database import get_db
 from app.models.user import User
+from app.models.organization import Organization
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.schemas.user import AdminPasswordReset, TeammateResponse, UserCreate, UserStatusUpdate, UserUpdate, UserResponse, TokenResponse
 from datetime import datetime, timezone
@@ -495,9 +496,13 @@ async def login(
     """Authenticate user and set cookies"""
     try:
         # Verify credentials
-        user = db.query(User).filter(
-            User.email == form_data.username,
-            User.is_active == True
+        normalized_email = form_data.username.strip().lower()
+        user = db.query(User).join(
+            Organization, User.organization_id == Organization.id
+        ).filter(
+            func.lower(User.email) == normalized_email,
+            User.is_active.is_(True),
+            Organization.is_active.is_(True)
         ).first()
   
         if not user or not user.verify_password(form_data.password):
@@ -527,7 +532,7 @@ async def login(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=180  # 30 minutes
+            max_age=1800  # 30 minutes
         )
         response.set_cookie(
             key="refresh_token",

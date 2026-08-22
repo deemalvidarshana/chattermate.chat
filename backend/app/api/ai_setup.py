@@ -127,6 +127,7 @@ async def setup_ai(
                     model_type=ai_config.model_type,
                     model_name=ai_config.model_name,
                     is_active=ai_config.is_active,
+                    has_api_key=bool(ai_config.encrypted_api_key),
                     settings=ai_config.settings
                 )
             )
@@ -187,6 +188,7 @@ async def setup_ai(
                 model_type=ai_config.model_type,
                 model_name=ai_config.model_name,
                 is_active=ai_config.is_active,
+                has_api_key=bool(ai_config.encrypted_api_key),
                 settings=ai_config.settings
             )
         )
@@ -229,6 +231,7 @@ async def get_organization_ai_config(
             model_type=ai_config.model_type,
             model_name=ai_config.model_name,
             is_active=ai_config.is_active,
+            has_api_key=bool(ai_config.encrypted_api_key),
             settings=ai_config.settings
         )
 
@@ -349,6 +352,7 @@ async def update_ai_config(
                 model_type=updated_config.model_type,
                 model_name=updated_config.model_name,
                 is_active=updated_config.is_active,
+                has_api_key=bool(updated_config.encrypted_api_key),
                 settings=updated_config.settings
             )
         )

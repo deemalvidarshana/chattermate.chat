@@ -67,8 +67,13 @@ const {
   setupConfig,
   saveAISetup,
   updateAISetup,
-  hasExistingConfig
+  hasExistingConfig,
+  hasStoredApiKey
 } = useAISetup()
+
+const apiKeyPlaceholder = computed(() =>
+  hasStoredApiKey.value ? '••••••••••••••••' : 'Enter your API key'
+)
 
 // Set initial tab based on enterprise availability
 const activeTab = ref(hasEnterpriseModule ? 'chattermate' : 'custom')
@@ -635,12 +640,14 @@ const chatterMateButtonText = computed(() => {
                     id="apiKey"
                     type="password"
                     v-model="setupConfig.apiKey"
-                    :required="showApiKey"
-                    placeholder="sk-..."
+                    :required="showApiKey && !hasStoredApiKey"
+                    :placeholder="apiKeyPlaceholder"
+                    :aria-describedby="hasStoredApiKey ? 'api-key-saved-hint' : 'api-key-hint'"
                     class="form-control form-control-mono"
                   />
-                  <p class="key-hint">
-                    Your API key will be encrypted and stored securely.<template v-if="selectedProvider?.api_key_url">&nbsp;&nbsp;<a
+                  <p :id="hasStoredApiKey ? 'api-key-saved-hint' : 'api-key-hint'" class="key-hint">
+                    <template v-if="hasStoredApiKey">A key is saved securely for this workspace. Enter a new key only to replace it.</template>
+                    <template v-else>Your API key will be encrypted and stored securely.</template><template v-if="selectedProvider?.api_key_url">&nbsp;&nbsp;<a
                       :href="selectedProvider.api_key_url"
                       target="_blank"
                       rel="noopener noreferrer"

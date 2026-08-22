@@ -1215,11 +1215,11 @@ def test_generate_instructions_missing_api_key(
         def __init__(self, *args, **kwargs):
             raise ImportError("No module named 'app.enterprise.repositories.subscription'")
     
-    # Create AI config mock without API key
+    # Create AI config mock without an encrypted API key
     mock_config = MagicMock()
     mock_config.model_type = "OPENAI"
     mock_config.model_name = "gpt-4"
-    mock_config.api_key = ""  # Mock the decrypted api_key property
+    mock_config.encrypted_api_key = ""
     mock_config.is_active = True
     
     # Add the mock module to sys.modules
@@ -1252,10 +1252,11 @@ def test_generate_instructions_ai_error(
     mock_config = MagicMock()
     mock_config.model_type = "OPENAI"
     mock_config.model_name = "gpt-4"
-    mock_config.api_key = "test-key"
+    mock_config.encrypted_api_key = "encrypted-test-key"
     mock_config.is_active = True
     
     with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config, \
+         patch('app.api.agent.decrypt_api_key', return_value='test-key'), \
          patch('app.api.agent.AgnoAgent') as mock_agent:
         
         mock_get_config.return_value = mock_config
@@ -1264,6 +1265,49 @@ def test_generate_instructions_ai_error(
         response = client.post("/api/agents/generate-instructions", json=prompt_data)
         assert response.status_code == 500
         assert "Failed to generate instructions" in response.json()["detail"]
+
+
+def test_generate_instructions_uses_current_tenant_encrypted_config(
+    client,
+    test_user
+):
+    """Generation decrypts only the authenticated tenant's active model key."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    prompt_data = {
+        "prompt": "Create helpful instructions",
+        "existing_instructions": []
+    }
+    mock_config = MagicMock()
+    mock_config.model_type = "GROQ"
+    mock_config.model_name = "openai/gpt-oss-120b"
+    mock_config.encrypted_api_key = "tenant-encrypted-key"
+    mock_response = MagicMock(content="1. Be concise\n2. Escalate billing issues")
+
+    with patch(
+        'app.repositories.ai_config.AIConfigRepository.get_active_config',
+        return_value=mock_config
+    ) as mock_get_config, patch(
+        'app.api.agent.decrypt_api_key', return_value='tenant-plain-key'
+    ) as mock_decrypt, patch(
+        'app.api.agent.create_model', return_value=MagicMock()
+    ) as mock_create_model, patch(
+        'app.api.agent.AgnoAgent'
+    ) as mock_agent:
+        mock_agent.return_value.arun = AsyncMock(return_value=mock_response)
+
+        response = client.post("/api/agents/generate-instructions", json=prompt_data)
+
+    assert response.status_code == 200
+    assert response.json() == ["Be concise", "Escalate billing issues"]
+    mock_get_config.assert_called_once_with(test_user.organization_id)
+    mock_decrypt.assert_called_once_with("tenant-encrypted-key")
+    mock_create_model.assert_called_once_with(
+        model_type="GROQ",
+        api_key="tenant-plain-key",
+        model_name="openai/gpt-oss-120b",
+        max_tokens=800
+    )
 
 
 def test_generate_instructions_rate_limiting(

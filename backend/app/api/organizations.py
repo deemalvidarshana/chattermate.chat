@@ -70,18 +70,20 @@ async def create_organization(
         if HAS_EMAIL_VALIDATION:
             ensure_not_disposable(org_data.admin_email)
 
-        # Check if any organization exists
-        existing_orgs = db.query(Organization).first()
-        
-        # If organizations exist, return 403 Forbidden
-        if existing_orgs:
+        # A hosted/multi-tenant installation accepts more than one workspace.
+        # Tenant identity is the globally unique domain; user email is globally
+        # unique as well because login starts with an email address only.
+        if db.query(Organization.id).filter(Organization.domain == org_data.domain).first():
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization already exists"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An organization with this domain already exists"
+            )
+        if db.query(User.id).filter(User.email == str(org_data.admin_email)).first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists"
             )
 
-        
-      
         # Create organization
         org_repo = OrganizationRepository(db)
         organization = org_repo.create_organization(
@@ -210,6 +212,14 @@ async def create_organization(
     except HTTPException:
         db.rollback()
         raise
+    except IntegrityError:
+        # Covers concurrent signups that pass the friendly pre-checks at the
+        # same time. Never expose database constraint details to the client.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This organization domain or admin email is already registered"
+        )
     except Exception as e:
         db.rollback()
         logger.error(f"Organization creation failed: {str(e)}")

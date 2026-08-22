@@ -304,7 +304,7 @@ const handleVerifyAndResetPassword = async () => {
                     <span v-else>Sign In</span>
                 </button>
 
-                <p v-if="hasEnterpriseModule" class="signup-prompt">
+                <p class="signup-prompt">
                     Don't have an account?
                     <a href="#" @click.prevent="navigateToSignup" class="signup-link">Sign up</a>
                 </p>

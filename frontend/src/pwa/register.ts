@@ -34,6 +34,33 @@ export const isShopifyEmbedded = (): boolean => {
  */
 const UPDATE_TAKEOVER_TIMEOUT_MS = 4000
 
+const isLocalViteDevelopment = () =>
+  import.meta.env.DEV && ['localhost', '127.0.0.1'].includes(window.location.hostname)
+
+/** Remove production app-shell state that can survive when localhost switches to Vite dev. */
+async function cleanupLocalDevelopmentPWA() {
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    const hadRegistrations = registrations.length > 0
+    await Promise.all(registrations.map((registration) => registration.unregister()))
+
+    if ('caches' in window) {
+      const cacheNames = await window.caches.keys()
+      await Promise.all(
+        cacheNames
+          .filter((name) => name.startsWith('workbox-') || name.includes('precache'))
+          .map((name) => window.caches.delete(name))
+      )
+    }
+
+    // The unregistered worker controls the current document until its next
+    // navigation. Reload once only when a registration actually existed.
+    if (hadRegistrations) window.location.reload()
+  } catch (error) {
+    console.warn('Failed to clear stale localhost service worker:', error)
+  }
+}
+
 /**
  * Offer the new build rather than forcing it: an agent mid-reply should not
  * have the page reloaded under them. vue-sonner is imported lazily so the
@@ -71,6 +98,11 @@ async function promptForUpdate(reload: (reloadPage?: boolean) => Promise<void>) 
 
 export function setupPWA() {
   if (!('serviceWorker' in navigator) || isShopifyEmbedded()) return
+
+  if (isLocalViteDevelopment()) {
+    void cleanupLocalDevelopmentPWA()
+    return
+  }
 
   // Clients from pre-PWA deployments still hold the Firebase-only worker that
   // Firebase's getToken() self-registered; drop it so only one SW owns scope /.

@@ -42,6 +42,7 @@ from PIL import Image
 from uuid import UUID
 from app.core.s3 import upload_file_to_s3
 from app.core.config import settings
+from app.core.security import decrypt_api_key
 from app.services.file_storage import local_upload_path
 from pydantic import BaseModel
 from agno.agent import Agent as AgnoAgent
@@ -705,24 +706,33 @@ async def generate_instructions(
                 detail="Prompt exceeds maximum length of 1000 characters"
             )
         
-        # Check if enterprise module is available
+        # Check if the managed enterprise fallback is available.
         try:
             from app.enterprise.repositories.subscription import SubscriptionRepository
             HAS_ENTERPRISE = True
         except ImportError:
             HAS_ENTERPRISE = False
         
-        # Get API key and model - first check for ChatterMate config if enterprise is available
+        # Tenant configuration always wins. This keeps model credentials isolated
+        # by organization even when the enterprise module is installed.
         api_key = ""
         model_name = ""
         model_type = ""
-        
-        if HAS_ENTERPRISE:
-            # Use Groq/OpenAI with keys from env for ChatterMate model
+
+        from app.repositories.ai_config import AIConfigRepository
+        ai_config = AIConfigRepository(db).get_active_config(current_user.organization_id)
+
+        if ai_config:
+            model_type = ai_config.model_type
+            model_name = ai_config.model_name
+            if ai_config.encrypted_api_key:
+                api_key = decrypt_api_key(ai_config.encrypted_api_key)
+        elif HAS_ENTERPRISE:
+            # Managed fallback is only used when this tenant has no saved config.
             model_type = 'OPENAI'
             model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
-            
+
             if not api_key:
                 logger.error("ChatterMate API key not found in environment")
                 raise HTTPException(
@@ -730,26 +740,16 @@ async def generate_instructions(
                     detail="ChatterMate API configuration missing"
                 )
         else:
-            # Get from organization's AI config
-            from app.repositories.ai_config import AIConfigRepository
-            ai_config_repo = AIConfigRepository(db)
-            ai_config = ai_config_repo.get_active_config(current_user.organization_id)
-            
-            if not ai_config:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No AI configuration found for your organization"
-                )
-            
-            model_type = ai_config.model_type
-            model_name = ai_config.model_name
-            api_key = ai_config.api_key
-            
-            if not api_key:
-                raise HTTPException(
-                    status_code=500,
-                    detail="API configuration missing from your organization settings"
-                )
+            raise HTTPException(
+                status_code=404,
+                detail="No AI configuration found for your organization"
+            )
+
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="API configuration missing from your organization settings"
+            )
         
         # Create an instruction generation system message with context
         system_message = """

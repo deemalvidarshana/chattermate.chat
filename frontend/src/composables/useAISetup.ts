@@ -32,6 +32,7 @@ export function useAISetup() {
   })
 
   const hasExistingConfig = ref(false)
+  const hasStoredApiKey = ref(false)
 
   // Provider catalog is served by the backend (GET /ai/providers) — single source
   // of truth. Values are normalized to lowercase to match the save/load flow, which
@@ -56,8 +57,11 @@ export function useAISetup() {
       setupConfig.value = {
         provider: config.model_type.toLowerCase(),
         model: config.model_name,
-        apiKey: config.api_key
+        // Secrets are never returned to the browser. Keep this empty so a
+        // masked display value can never be submitted back as a real key.
+        apiKey: ''
       }
+      hasStoredApiKey.value = config.has_api_key
       hasExistingConfig.value = true
     } catch (err: unknown) {
       const response = (err as { response?: { status?: number; data?: { detail?: { details?: string; error?: string } } } }).response;
@@ -65,6 +69,7 @@ export function useAISetup() {
         error.value = response?.data?.detail?.details || response?.data?.detail?.error || 'Failed to load configuration'
       }
       hasExistingConfig.value = false
+      hasStoredApiKey.value = false
     } finally {
       isLoading.value = false
     }
@@ -85,6 +90,8 @@ export function useAISetup() {
         model_name: setupConfig.value.model,
         api_key: setupConfig.value.apiKey,
       })
+      hasStoredApiKey.value = true
+      setupConfig.value.apiKey = ''
       return true
     } catch (err: unknown) {
       const apiError = (err as { response?: { data?: { detail?: { details?: string; error?: string } } } }).response?.data?.detail;
@@ -99,11 +106,18 @@ export function useAISetup() {
     try {
       error.value = ''
       isLoading.value = true
-      await aiService.updateAI({
+      const payload: AIConfig = {
         model_type: setupConfig.value.provider.toUpperCase(),
         model_name: setupConfig.value.model,
-        api_key: setupConfig.value.apiKey,
-      })
+      }
+      if (setupConfig.value.apiKey) {
+        payload.api_key = setupConfig.value.apiKey
+      }
+      await aiService.updateAI(payload)
+      if (setupConfig.value.apiKey) {
+        hasStoredApiKey.value = true
+        setupConfig.value.apiKey = ''
+      }
       return true
     } catch (err: unknown) {
       const apiError = (err as { response?: { data?: { detail?: { details?: string; error?: string } } } }).response?.data?.detail;
@@ -128,6 +142,7 @@ export function useAISetup() {
     updateAISetup,
     loadProviders,
     loadExistingConfig,
-    hasExistingConfig
+    hasExistingConfig,
+    hasStoredApiKey
   }
 }

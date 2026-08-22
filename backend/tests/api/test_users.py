@@ -325,6 +325,39 @@ def test_login_success(client: TestClient, test_user: User):
     assert "refresh_token" in cookies
     assert "user_info" in cookies
 
+
+def test_login_is_case_insensitive(client: TestClient, test_user: User):
+    """Email casing and surrounding whitespace must not select another tenant."""
+    response = client.post(
+        "/api/v1/users/login",
+        data={
+            "username": f"  {test_user.email.upper()}  ",
+            "password": "testpassword"
+        }
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["organization_id"] == str(test_user.organization_id)
+
+
+def test_login_rejects_user_from_inactive_organization(
+    client: TestClient, db: Session, test_user: User, test_organization: Organization
+):
+    """A disabled tenant cannot receive a valid session token."""
+    test_organization.is_active = False
+    db.commit()
+
+    response = client.post(
+        "/api/v1/users/login",
+        data={
+            "username": test_user.email,
+            "password": "testpassword"
+        }
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Incorrect email or password"
+
 def test_login_invalid_credentials(client: TestClient):
     """Test login with invalid credentials"""
     response = client.post(

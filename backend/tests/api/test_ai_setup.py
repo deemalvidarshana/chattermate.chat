@@ -370,6 +370,9 @@ def test_get_ai_config_success(client, db, test_user, test_ai_config):
     data = response.json()
     assert data["model_type"] == test_ai_config.model_type
     assert data["model_name"] == test_ai_config.model_name
+    assert data["has_api_key"] is True
+    assert "api_key" not in data
+    assert "encrypted_api_key" not in data
 
 def test_get_ai_config_not_found(client, db, test_user):
     """Test getting AI configuration when none exists"""
@@ -426,20 +429,18 @@ def test_update_ai_config_without_api_key(client, db, test_user, test_ai_config)
         # No api_key provided
     }
     
-    # Mock the repository to handle None API key properly
-    with patch('app.repositories.ai_config.AIConfigRepository.update_config') as mock_update:
-        mock_update.return_value = test_ai_config
-        response = client.put(
-            "/api/ai/config",
-            json=update_data
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["message"] == "AI configuration updated successfully"
-        # Verify that update_config was called with None for api_key (no change)
-        mock_update.assert_called_once()
-        call_args = mock_update.call_args
-        assert call_args[1]['api_key'] is None  # None indicates no change
+    original_encrypted_key = test_ai_config.encrypted_api_key
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "AI configuration updated successfully"
+    assert data["config"]["has_api_key"] is True
+    db.refresh(test_ai_config)
+    assert test_ai_config.encrypted_api_key == original_encrypted_key
 
 def test_update_ai_config_failed_validation(client, db, test_user, test_ai_config):
     """Test update AI config with failed API key validation"""
@@ -599,4 +600,4 @@ def test_setup_ai_unsupported_model_type(client, db, test_user):
         # Should fail validation because CHATTERMATE with non-"chattermate" model name is invalid
         assert response.status_code == 400
         data = response.json()
-        assert "error" in data["detail"] 
+        assert "error" in data["detail"]

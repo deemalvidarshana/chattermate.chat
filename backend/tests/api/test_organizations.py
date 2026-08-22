@@ -206,7 +206,7 @@ def test_create_organization(client, db, monkeypatch):
         },
         "admin_email": "admin@new.com",
         "admin_name": "Admin User",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass!123"
         
     }
 
@@ -318,8 +318,8 @@ def test_get_organization_stats(client, test_organization, test_user):
 
 
 # Negative test cases
-def test_create_organization_duplicate(client, test_organization):
-    """Test creating organization when one already exists"""
+def test_create_second_organization(client, test_organization):
+    """A second tenant gets its own organization, roles and owner."""
     org_data = {
         "name": "Another Organization",
         "domain": "another.com",
@@ -335,12 +335,44 @@ def test_create_organization_duplicate(client, test_organization):
         },
         "admin_email": "admin@another.com",
         "admin_name": "Another Admin",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass!123"
     }
 
     response = client.post("/api/v1/organizations", json=org_data)
-    assert response.status_code == 403
-    assert "Organization already exists" in response.json()["detail"]
+    assert response.status_code == 201
+    data = response.json()
+    assert data["id"] != str(test_organization.id)
+    assert data["user"]["organization_id"] == data["id"]
+
+
+def test_create_organization_rejects_duplicate_domain(client, test_organization):
+    """A domain is a tenant identity and cannot be registered twice."""
+    response = client.post("/api/v1/organizations", json={
+        "name": "Domain Impostor",
+        "domain": test_organization.domain,
+        "timezone": "UTC",
+        "admin_email": "other-admin@example.com",
+        "admin_name": "Other Admin",
+        "admin_password": "AdminPass!123"
+    })
+
+    assert response.status_code == 409
+    assert "domain" in response.json()["detail"].lower()
+
+
+def test_create_organization_rejects_duplicate_login_email(client, test_user):
+    """Email stays globally unique because login does not ask for a tenant."""
+    response = client.post("/api/v1/organizations", json={
+        "name": "Another Tenant",
+        "domain": "another-tenant.example.com",
+        "timezone": "UTC",
+        "admin_email": test_user.email,
+        "admin_name": "Existing User",
+        "admin_password": "AdminPass!123"
+    })
+
+    assert response.status_code == 409
+    assert "email" in response.json()["detail"].lower()
 
 @requires_email_validation
 def test_create_organization_rejects_disposable_admin_email(client, db):
@@ -367,7 +399,7 @@ def test_create_organization_rejects_disposable_admin_email(client, db):
         },
         "admin_email": "someone@yopmail.com",
         "admin_name": "Throwaway Admin",
-        "admin_password": "adminpass123"
+        "admin_password": "AdminPass!123"
     }
 
     response = client.post("/api/v1/organizations", json=org_data)

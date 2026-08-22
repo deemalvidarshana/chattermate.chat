@@ -129,6 +129,29 @@ def test_update_nonexistent_config(ai_config_repo):
     )
     assert result is None
 
+
+def test_update_config_without_new_key_preserves_encrypted_secret(
+    ai_config_repo, test_organization_id
+):
+    """An omitted replacement key must not erase or corrupt the tenant secret."""
+    config = ai_config_repo.create_config(
+        org_id=test_organization_id,
+        model_type="groq",
+        model_name="openai/gpt-oss-120b",
+        api_key="tenant-key"
+    )
+    original_encrypted_key = config.encrypted_api_key
+
+    updated_config = ai_config_repo.update_config(
+        config_id=config.id,
+        model_name="llama-3.3-70b-versatile",
+        api_key=None
+    )
+
+    assert updated_config.model_name == "llama-3.3-70b-versatile"
+    assert updated_config.encrypted_api_key == original_encrypted_key
+    assert decrypt_api_key(updated_config.encrypted_api_key) == "tenant-key"
+
 def test_deactivate_config(ai_config_repo, test_organization_id):
     """Test deactivating an AI configuration"""
     # Create config
@@ -204,4 +227,4 @@ def test_create_config_invalid_model_type(ai_config_repo, test_organization_id):
             model_type="invalid",
             model_name="model",
             api_key="key"
-        ) 
+        )

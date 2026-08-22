@@ -17,6 +17,11 @@ ENV PIP_DEFAULT_TIMEOUT=120
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --retries 10 -r requirements.txt
 
+# Crawl4AI's Python package does not include its Playwright browser/runtime
+# dependencies. The knowledge worker needs these to render JavaScript-only
+# sites; keep the development image in parity with Dockerfile.backend.prod.
+RUN crawl4ai-setup
+
 # Node.js + npx and uv/uvx for STDIO MCP servers (npx @elastic/mcp-server-…,
 # uvx mcp-server-…). Copied from the official images instead of apt, which
 # only ships an EOL Node 18 on bookworm. Kept below the pip layer so an
@@ -63,4 +68,4 @@ ENV PYTORCH_TRANSFORMERS_CACHE=/app/.cache/pytorch_transformers
 EXPOSE 8000
 
 # Run the startup script
-CMD ["./scripts/start.sh"] 
+CMD ["./scripts/start.sh"]

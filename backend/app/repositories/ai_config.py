@@ -78,7 +78,10 @@ class AIConfigRepository:
 
         for key, value in kwargs.items():
             if key == 'api_key':
-                config.encrypted_api_key = encrypt_api_key(value)
+                # An omitted key means "keep the tenant's existing secret".
+                # Never encrypt None or a UI masking sentinel over the saved key.
+                if value is not None:
+                    config.encrypted_api_key = encrypt_api_key(value)
             else:
                 setattr(config, key, value)
 

@@ -53,6 +53,12 @@ const baseRoutes = [
     meta: { requiresAuth: false },
   },
   {
+    path: '/signup',
+    name: 'signup',
+    component: () => import('@/views/SignupView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/setup',
     name: 'setup',
     component: () => import('@/views/SetupView.vue'),
@@ -232,12 +238,6 @@ const allRoutes = hasEnterpriseModule
   ? [
       ...baseRoutes,
       {
-        path: '/signup',
-        name: 'signup',
-        component: loadEnterpriseComponent(moduleImports.signupView),
-        meta: { requiresAuth: false },
-      },
-      {
         path: '/explore',
         name: 'explore',
         component: loadEnterpriseComponent(moduleImports.exploreView),
@@ -336,11 +336,12 @@ router.beforeEach(async (to, from, next) => {
   // Always check setup status to decide between Setup vs Login/Signup
   const isSetupComplete = await getSetupStatus()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
+  const isPublicAuthRoute = to.path === '/login' || to.path === '/signup'
 
   // Standard app navigation logic
   if (!isAuthenticated) {
     // If setup is not complete, always go to setup page first
-    if (!isSetupComplete && to.path !== '/setup') {
+    if (!isSetupComplete && to.path !== '/setup' && !isPublicAuthRoute) {
       return next('/setup')
     } else if (requiresAuth) {
       // Preserve where they were headed (e.g. the Slack install landing link)
@@ -350,7 +351,7 @@ router.beforeEach(async (to, from, next) => {
     // Public route; allow
     return next()
   } else {
-    if (!isSetupComplete && to.path !== '/setup') {
+    if (!isSetupComplete && to.path !== '/setup' && !isPublicAuthRoute) {
       return next('/setup')
     }
   }

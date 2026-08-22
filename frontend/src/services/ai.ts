@@ -20,7 +20,7 @@ import type { AIConfigResponse, AISetupResponse, AIProvider } from '@/types/ai'
 export interface AIConfig {
   model_type: string;
   model_name: string;
-  api_key: string;
+  api_key?: string;
 }
 
 export const aiService = {
@@ -29,7 +29,7 @@ export const aiService = {
     return response.data.providers
   },
 
-  async getOrganizationConfig(): Promise<AIConfig> {
+  async getOrganizationConfig(): Promise<AIConfigResponse> {
     const response = await api.get('/ai/config')
     return response.data
   },

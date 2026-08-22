@@ -43,6 +43,7 @@ class AIConfigResponse(BaseModel):
     model_type: AIModelType
     model_name: str
     is_active: bool
+    has_api_key: bool = False
     settings: Dict = {}
 
     class Config:

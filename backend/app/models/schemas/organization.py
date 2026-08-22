@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional, Dict, TypedDict
 from uuid import UUID
 
@@ -57,6 +57,33 @@ class OrganizationCreate(OrganizationBase):
     admin_email: EmailStr
     admin_name: str
     admin_password: str
+
+    @field_validator('name', 'admin_name')
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not 2 <= len(value) <= 100:
+            raise ValueError('Must be between 2 and 100 characters')
+        return value
+
+    @field_validator('domain')
+    @classmethod
+    def normalize_domain(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value or len(value) > 100 or ' ' in value:
+            raise ValueError('Enter a valid organization domain')
+        return value
+
+    @field_validator('admin_email')
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return str(value).strip().lower()
+
+    @field_validator('admin_password')
+    @classmethod
+    def validate_admin_password(cls, value: str) -> str:
+        from app.core.security import validate_password_strength
+        return validate_password_strength(value)
 
 
 class OrganizationUpdate(BaseModel):
