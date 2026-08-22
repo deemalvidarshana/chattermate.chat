@@ -153,14 +153,20 @@ def _record(
 
 
 def _business_terms(ctx) -> Tuple[str, ...]:
-    """Org name and the domain's own label — a message naming either is about
-    the business, whatever else it contains."""
+    """Agent brand and tenant fallback terms that establish business scope."""
     terms = []
-    for attr in ("org_name", "domain"):
+    agent_attrs = ("business_name", "business_domain")
+    has_agent_identity = any(
+        isinstance(getattr(ctx, attr, None), str)
+        and getattr(ctx, attr, None).strip()
+        for attr in agent_attrs
+    )
+    attrs = agent_attrs if has_agent_identity else ("org_name", "domain")
+    for attr in attrs:
         value = getattr(ctx, attr, None)
         if isinstance(value, str) and value.strip():
             terms.append(value.strip())
-            if attr == "domain" and "." in value:
+            if attr in ("business_domain", "domain") and "." in value:
                 terms.append(value.split(".", 1)[0])
     return tuple(terms)
 

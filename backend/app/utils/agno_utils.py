@@ -53,6 +53,33 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
                 return OpenAIChat(api_key=api_key, id=model_name, max_tokens=max_tokens, response_format=response_format)
             else:
                 return OpenAIChat(api_key=api_key, id=model_name, max_tokens=max_tokens)
+        elif model_type == 'OPENROUTER':
+            # OpenRouter exposes an OpenAI-compatible Chat Completions API.
+            # Attribution headers are optional, but including them makes
+            # ChatterMate identifiable in the OpenRouter activity dashboard.
+            openrouter_kwargs = {
+                "api_key": api_key,
+                "id": model_name,
+                "max_tokens": max_tokens,
+                "base_url": "https://openrouter.ai/api/v1",
+                "default_headers": {
+                    "HTTP-Referer": settings.FRONTEND_URL,
+                    "X-OpenRouter-Title": "ChatterMate",
+                },
+                # OpenRouter may otherwise route to an endpoint that silently
+                # ignores tools or JSON-schema output parameters. Response
+                # healing repairs common malformed-JSON defects before agno
+                # validates the ChatResponse schema.
+                "request_params": {
+                    "extra_body": {
+                        "provider": {"require_parameters": True},
+                        "plugins": [{"id": "response-healing"}],
+                    }
+                },
+            }
+            if response_format:
+                openrouter_kwargs["response_format"] = response_format
+            return OpenAIChat(**openrouter_kwargs)
         elif model_type == 'ANTHROPIC':
             from agno.models.anthropic import Claude
             return Claude(api_key=api_key, id=model_name, max_tokens=max_tokens)
@@ -143,7 +170,13 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
         logger.error(f"Error creating model type {model_type}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to initialize model: {str(e)}")
 
-async def test_model_api_key(api_key: str, model_type: str, model_name: str) -> bool:
+async def test_model_api_key(
+    api_key: str,
+    model_type: str,
+    model_name: str,
+    *,
+    raise_on_error: bool = False,
+) -> bool:
     """
     Test if the API key is valid for the given model type.
     
@@ -170,4 +203,6 @@ async def test_model_api_key(api_key: str, model_type: str, model_name: str) -> 
         return True
     except Exception as e:
         logger.error(f"API key test failed: {str(e)}")
-        return False 
+        if raise_on_error:
+            raise
+        return False

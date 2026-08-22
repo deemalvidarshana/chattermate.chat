@@ -107,6 +107,8 @@ class GuardrailContext:
 
     org_name: Optional[str] = None
     domain: Optional[str] = None
+    business_name: Optional[str] = None
+    business_domain: Optional[str] = None
     agent_type: Optional[str] = None
     description: Optional[str] = None
     topic_scope: Optional[str] = None
@@ -144,7 +146,12 @@ def _org_label(ctx) -> str:
     a guardrail must degrade to a vaguer prompt, not to a broken chat.
     """
     try:
-        return _clean_inline(getattr(ctx, "org_name", None), 100) or "this business"
+        return (
+            _clean_inline(getattr(ctx, "business_name", None), 100)
+            or _clean_inline(getattr(ctx, "business_domain", None), 255)
+            or _clean_inline(getattr(ctx, "org_name", None), 100)
+            or "this business"
+        )
     except Exception:
         return "this business"
 
@@ -183,25 +190,36 @@ def resolve_topic_scope(ctx) -> str:
         role = _ROLE_BY_AGENT_TYPE.get(
             getattr(ctx, "agent_type", None) or "", _DEFAULT_ROLE
         )
-        org_name = _clean_inline(getattr(ctx, "org_name", None), 100)
-        domain = _clean_inline(getattr(ctx, "domain", None), 100)
+        business_name = _clean_inline(getattr(ctx, "business_name", None), 100)
+        business_domain = _clean_inline(getattr(ctx, "business_domain", None), 255)
+        has_agent_identity = bool(business_name or business_domain)
+        org_name = _org_label(ctx)
+        domain = business_domain if has_agent_identity else _clean_inline(
+            getattr(ctx, "domain", None), 255
+        )
+        identity = f"{org_name} ({domain})" if domain else org_name
         topic_scope = _clean_inline(getattr(ctx, "topic_scope", None), _TOPIC_SCOPE_MAX)
         description = _clean_inline(getattr(ctx, "description", None), _DESCRIPTION_MAX)
 
         if org_name and topic_scope:
             return (
-                f"You are the {role} assistant for {org_name} ({domain}). "
+                f"You are the {role} assistant for {identity}. "
                 f'Its remit, as set by the business: "{topic_scope}".'
             )
         if org_name and description:
             return (
-                f"You are the {role} assistant for {org_name} ({domain}). "
+                f"You are the {role} assistant for {identity}. "
                 f'This agent\'s role, as configured by the business: "{description}".'
             )
         if org_name:
+            if domain:
+                return (
+                    f"You are the {role} assistant for {org_name}, the business at "
+                    f"{domain}, and you speak only for that business."
+                )
             return (
-                f"You are the {role} assistant for {org_name}, the business at "
-                f"{domain}, and you speak only for that business."
+                f"You are the {role} assistant for {org_name}, and you speak "
+                "only for that business."
             )
     except Exception as e:
         logger.error(f"Topic scope resolution failed, using fallback: {e}")

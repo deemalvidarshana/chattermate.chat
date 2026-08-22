@@ -102,6 +102,8 @@ def test_agent(db: Session, test_organization_id: UUID, test_organization, test_
         organization_id=test_organization_id,
         name="Test Agent",
         display_name="Test Agent Display",
+        business_name="CeylincoWorks",
+        business_domain="ceylincoworks.com",
         description="Test agent description",
         instructions="Test instructions",
         tools='["jira"]',
@@ -359,7 +361,8 @@ class TestJiraRepository:
 
         # Verify all agent fields are mapped
         agent_fields = [
-            'id', 'name', 'display_name', 'description', 'instructions',
+            'id', 'name', 'display_name', 'business_name', 'business_domain',
+            'description', 'instructions',
             'agent_type', 'is_default', 'is_active',
             'organization_id', 'transfer_to_human', 'ask_for_rating'
         ]

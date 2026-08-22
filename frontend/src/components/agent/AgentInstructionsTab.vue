@@ -39,6 +39,14 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
+  businessName: {
+    type: String as () => string | null,
+    default: null
+  },
+  businessDomain: {
+    type: String as () => string | null,
+    default: null
+  },
   transferToHuman: {
     type: Boolean,
     required: true
@@ -129,6 +137,8 @@ const localInstructions = ref(props.instructions)
 const localGuardrailPrompt = ref(props.guardrailPrompt ?? '')
 const defaultGuardrailPrompt = ref('')
 const localGuardrailEnabled = ref(props.guardrailEnabled)
+const localBusinessName = ref(props.businessName ?? '')
+const localBusinessDomain = ref(props.businessDomain ?? '')
 
 const isGuardrailDefault = computed(() => {
   const text = localGuardrailPrompt.value.trim()
@@ -146,21 +156,33 @@ const localSelectedGroupIds = ref<string[]>([...props.selectedGroupIds])
 // than duplicated here so the box can never drift from the wording actually sent
 // to the model. If it fails, the box stays empty and still means "use the
 // default" — the feature degrades to what it was before.
-onMounted(async () => {
+const loadDefaultGuardrail = async () => {
+  const previousDefault = defaultGuardrailPrompt.value.trim()
+  const wasShowingDefault = !localGuardrailPrompt.value.trim()
+    || localGuardrailPrompt.value.trim() === previousDefault
   try {
-    defaultGuardrailPrompt.value = await agentService.getGuardrailDefault()
-    if (!localGuardrailPrompt.value.trim()) {
+    defaultGuardrailPrompt.value = await agentService.getGuardrailDefault(props.agent?.id)
+    if (wasShowingDefault) {
       localGuardrailPrompt.value = defaultGuardrailPrompt.value
     }
   } catch (e) {
     console.error('Could not load the default guardrail rule:', e)
   }
+}
+
+onMounted(async () => {
+  await loadDefaultGuardrail()
 })
 
 watch(() => props.guardrailPrompt, (v) => {
   localGuardrailPrompt.value = v ?? defaultGuardrailPrompt.value
 })
 watch(() => props.guardrailEnabled, (v) => { localGuardrailEnabled.value = v })
+watch(() => props.businessName, async (v) => {
+  localBusinessName.value = v ?? ''
+  await loadDefaultGuardrail()
+})
+watch(() => props.businessDomain, (v) => { localBusinessDomain.value = v ?? '' })
 
 watch(() => props.instructions, (newValue) => {
   localInstructions.value = newValue
@@ -244,6 +266,8 @@ const handleRatingToggle = (event: Event) => {
 const handleSave = () => {
   emit('save-agent', {
     instructions: localInstructions.value,
+    businessName: localBusinessName.value.trim() || null,
+    businessDomain: localBusinessDomain.value.trim() || null,
     // null when untouched, so this agent keeps following the shipped default
     // rather than freezing a copy of today's wording.
     guardrailPrompt: isGuardrailDefault.value ? null : localGuardrailPrompt.value.trim(),
@@ -312,6 +336,41 @@ const handleSave = () => {
         placeholder="Enter instructions for the agent..."
         :readonly="!isEditing"
       ></textarea>
+    </section>
+
+    <!-- The brand this agent represents can differ from the tenant/account. -->
+    <section class="detail-section identity-section">
+      <h4 class="section-title">Agent business identity</h4>
+      <p class="helper-text identity-help">
+        Used in customer replies and guardrails. This can be different for every agent in your organization.
+      </p>
+      <div class="identity-grid">
+        <label class="identity-field">
+          <span>Business name</span>
+          <input
+            v-model="localBusinessName"
+            class="identity-input"
+            type="text"
+            maxlength="100"
+            placeholder="e.g. CeylincoWorks"
+            :readonly="!isEditing"
+          >
+        </label>
+        <label class="identity-field">
+          <span>Website domain</span>
+          <input
+            v-model="localBusinessDomain"
+            class="identity-input"
+            type="text"
+            maxlength="255"
+            placeholder="e.g. ceylincoworks.com"
+            :readonly="!isEditing"
+          >
+        </label>
+      </div>
+      <p class="helper-text identity-fallback">
+        If left empty, this agent uses the organization name and domain.
+      </p>
     </section>
 
     <!-- Guardrail Section -->
@@ -543,6 +602,58 @@ const handleSave = () => {
 
 .instructions-section {
   margin-bottom: var(--space-xl);
+}
+
+.identity-help {
+  margin-top: var(--space-sm);
+}
+
+.identity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.identity-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.identity-input {
+  width: 100%;
+  padding: var(--space-md);
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-color);
+  font: inherit;
+  font-weight: 400;
+  box-sizing: border-box;
+}
+
+.identity-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.identity-input:read-only {
+  background: var(--background-alt);
+}
+
+.identity-fallback {
+  margin-top: var(--space-sm);
+  margin-bottom: 0;
+}
+
+@media (max-width: 700px) {
+  .identity-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .instructions-header {
@@ -1182,4 +1293,4 @@ input:checked + .slider:before {
   color: var(--text-color);
   border-color: var(--text-muted);
 }
-</style> 
+</style>

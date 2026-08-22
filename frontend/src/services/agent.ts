@@ -150,9 +150,11 @@ export const agentService = {
     return response.data
   },
   
-  /** The shipped guardrail rule with {org} filled in, shown as editable starting text. */
-  async getGuardrailDefault(): Promise<string> {
-    const response = await api.get('/agent/guardrail-default')
+  /** The shipped guardrail rule filled with this agent's business identity. */
+  async getGuardrailDefault(agentId?: string): Promise<string> {
+    const response = await api.get('/agent/guardrail-default', {
+      params: agentId ? { agent_id: agentId } : undefined
+    })
     return response.data?.prompt ?? ''
   },
 

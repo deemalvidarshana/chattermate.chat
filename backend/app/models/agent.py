@@ -105,6 +105,12 @@ class Agent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(100), nullable=False)
     display_name = Column(String(100), nullable=True)
+    # Customer-facing business identity for this specific agent. An
+    # organization can own agents for several brands, so prompts must not
+    # assume the tenant/account name is the brand every agent represents.
+    # Null keeps existing agents backwards-compatible via organization fallback.
+    business_name = Column(String(100), nullable=True)
+    business_domain = Column(String(255), nullable=True)
     description = Column(Text)
     agent_type = Column(SQLEnum(AgentType), nullable=False)
     _instructions = Column('instructions', Text, nullable=False)

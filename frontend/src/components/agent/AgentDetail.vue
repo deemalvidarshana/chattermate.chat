@@ -748,6 +748,8 @@ const handleSaveAgentFromTab = async (data: any) => {
 
         const updatedAgent = await agentService.updateAgent(agentData.value.id, {
             instructions: instructions,
+            business_name: data.businessName,
+            business_domain: data.businessDomain,
             guardrail_prompt: data.guardrailPrompt,
             guardrail_enabled: data.guardrailEnabled,
             transfer_to_human: data.transferToHuman,
@@ -1077,6 +1079,8 @@ onMounted(async () => {
                                 :instructions="instructionsText"
                                 :guardrail-prompt="agentData.guardrail_prompt"
                                 :guardrail-enabled="agentData.guardrail_enabled ?? true"
+                                :business-name="agentData.business_name"
+                                :business-domain="agentData.business_domain"
                                 :transfer-to-human="agentData.transfer_to_human"
                                 :ai-replies-enabled="agentData.ai_replies_enabled ?? true"
                                 :ask-for-rating="agentData.ask_for_rating"

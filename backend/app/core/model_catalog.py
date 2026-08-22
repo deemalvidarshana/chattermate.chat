@@ -138,14 +138,26 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
         "requires_api_key": True,
         "custom_allowed": True,
         "api_key_url": "https://console.groq.com/keys",
-        # gpt-oss-120b is the durable pick. gpt-oss-20b is intentionally NOT listed: the
-        # smaller model leaks OpenAI "harmony" formatting (calls the response tool as
-        # `functions/json`), which Groq rejects, making structured output unreliable.
-        # llama-3.3-70b-versatile is kept for continuity but is deprecated (EOL
-        # 2026-08-16). Org-prefixed IDs must be passed exactly.
+        # Llama 3.1 8B and Llama 3.3 70B were retired for non-enterprise Groq
+        # accounts on 2026-08-16. Their official replacements are GPT-OSS 20B
+        # and GPT-OSS 120B respectively. Org-prefixed IDs must be passed exactly.
         "models": [
+            _m("openai/gpt-oss-20b", "GPT-OSS 20B (Recommended)"),
             _m("openai/gpt-oss-120b", "GPT-OSS 120B"),
-            _m("llama-3.3-70b-versatile", "Llama 3.3 70B Versatile"),
+        ],
+    },
+    "OPENROUTER": {
+        "label": "OpenRouter",
+        "requires_api_key": True,
+        "custom_allowed": True,
+        "api_key_url": "https://openrouter.ai/settings/keys",
+        # Suggestions support both tool calling and structured outputs. Custom
+        # IDs are checked against OpenRouter's live metadata when saved.
+        "models": [
+            _m("nvidia/nemotron-3-super-120b-a12b:free", "Nemotron 3 Super (Free)"),
+            _m("z-ai/glm-5.2:free", "GLM 5.2 (Free)"),
+            _m("openai/gpt-oss-20b", "GPT-OSS 20B"),
+            _m("openai/gpt-oss-120b", "GPT-OSS 120B"),
         ],
     },
 }

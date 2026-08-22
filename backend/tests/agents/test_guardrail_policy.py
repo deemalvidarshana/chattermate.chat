@@ -43,6 +43,8 @@ def ctx(**overrides) -> GuardrailContext:
     values = dict(
         org_name="Acme Shoes",
         domain="acmeshoes.com",
+        business_name=None,
+        business_domain=None,
         agent_type="customer_support",
         description=None,
         topic_scope=None,
@@ -139,6 +141,25 @@ class TestOperatorFence:
 
 
 class TestTopicScope:
+    def test_agent_business_identity_overrides_tenant_identity(self):
+        context = ctx(
+            business_name="CeylincoWorks",
+            business_domain="ceylincoworks.com",
+        )
+        line = resolve_topic_scope(context)
+        assert "CeylincoWorks" in line
+        assert "ceylincoworks.com" in line
+        assert "Acme Shoes" not in line
+        assert "acmeshoes.com" not in line
+
+    def test_partial_agent_identity_does_not_mix_in_tenant_domain(self):
+        line = resolve_topic_scope(ctx(
+            business_name="CeylincoWorks",
+            business_domain=None,
+        ))
+        assert "CeylincoWorks" in line
+        assert "acmeshoes.com" not in line
+
     def test_tier1_topic_scope_override(self):
         line = resolve_topic_scope(ctx(topic_scope="running-shoe e-commerce"))
         assert "Acme Shoes" in line
@@ -229,6 +250,14 @@ class TestGuardrailScopePrompt:
     def test_tenant_text_may_use_the_org_placeholder(self):
         out = guardrail_scope_prompt(ctx(guardrail_prompt="Answer only about {org}."))
         assert "Answer only about Acme Shoes." in out
+
+    def test_org_placeholder_uses_agent_business_identity_first(self):
+        out = guardrail_scope_prompt(ctx(
+            business_name="CeylincoWorks",
+            guardrail_prompt="Answer only about {org}.",
+        ))
+        assert "Answer only about CeylincoWorks." in out
+        assert "Acme Shoes" not in out
 
     def test_disabled_emits_nothing(self):
         assert guardrail_scope_prompt(ctx(guardrail_enabled=False)) == ""

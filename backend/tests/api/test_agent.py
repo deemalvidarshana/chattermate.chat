@@ -253,6 +253,8 @@ def test_update_agent_guardrail_round_trips(
     response = client.put(
         f"/api/agents/{test_agent.id}",
         json={
+            "business_name": "CeylincoWorks",
+            "business_domain": "ceylincoworks.com",
             "guardrail_enabled": False,
             "guardrail_prompt": "Only answer maths tutoring questions.",
             "topic_scope": "maths tutoring",
@@ -261,12 +263,16 @@ def test_update_agent_guardrail_round_trips(
     assert response.status_code == 200
     body = response.json()
     assert body["guardrail_enabled"] is False, "toggle did not survive the response"
+    assert body["business_name"] == "CeylincoWorks"
+    assert body["business_domain"] == "ceylincoworks.com"
     assert body["guardrail_prompt"] == "Only answer maths tutoring questions."
     assert body["topic_scope"] == "maths tutoring"
 
     # And it really persisted, not just echoed back.
     db.refresh(test_agent)
     assert test_agent.guardrail_enabled is False
+    assert test_agent.business_name == "CeylincoWorks"
+    assert test_agent.business_domain == "ceylincoworks.com"
     assert test_agent.guardrail_prompt == "Only answer maths tutoring questions."
 
 
@@ -389,6 +395,20 @@ def test_guardrail_default_route_is_not_shadowed_by_agent_id(client, db, test_ag
     """It sits next to GET /{agent_id}; a literal path declared after the
     parameterised one would be swallowed by it and return 404/422."""
     assert client.get("/api/agents/guardrail-default").status_code == 200
+
+
+def test_guardrail_default_uses_agent_business_identity(client, db, test_agent):
+    test_agent.business_name = "CeylincoWorks"
+    test_agent.business_domain = "ceylincoworks.com"
+    db.commit()
+
+    response = client.get(
+        "/api/agents/guardrail-default",
+        params={"agent_id": str(test_agent.id)},
+    )
+    assert response.status_code == 200
+    prompt = response.json()["prompt"]
+    assert "CeylincoWorks" in prompt
 
 
 def test_ai_disclaimer_toggle_round_trips(client, db, test_agent):

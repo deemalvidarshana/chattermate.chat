@@ -546,13 +546,60 @@ def test_get_processor_status(client: TestClient):
     assert "last_run" in data
     assert "error" in data
 
-def test_delete_knowledge(client: TestClient, test_knowledge):
-    """Test deleting knowledge"""
-    response = client.delete(f"/api/v1/knowledge/{test_knowledge.id}")
-    
+def test_delete_knowledge_removes_all_db_state_and_allows_readd(
+    client: TestClient,
+    db: Session,
+    test_organization,
+    test_user,
+    test_agent,
+):
+    """A source deleted from the agent UI must not remain as a duplicate."""
+    source = "https://example.com/delete-and-readd"
+    knowledge = Knowledge(
+        source=source,
+        source_type=SourceType.WEBSITE,
+        organization_id=test_organization.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(knowledge)
+    db.flush()
+    knowledge_id = knowledge.id
+    db.add(KnowledgeToAgent(knowledge_id=knowledge_id, agent_id=test_agent.id))
+    db.add(KnowledgeQueue(
+        organization_id=test_organization.id,
+        agent_id=test_agent.id,
+        user_id=test_user.id,
+        source_type="website",
+        source=source,
+        status=QueueStatus.COMPLETED,
+        created_at=datetime.now(timezone.utc),
+    ))
+    db.commit()
+
+    response = client.delete(f"/api/v1/knowledge/{knowledge_id}")
+
     assert response.status_code == 200
     data = response.json()
     assert data["message"] == "Knowledge source deleted successfully"
+    db.expire_all()
+    assert db.query(Knowledge).filter(Knowledge.id == knowledge_id).first() is None
+    assert db.query(KnowledgeToAgent).filter(
+        KnowledgeToAgent.knowledge_id == knowledge_id
+    ).first() is None
+    assert db.query(KnowledgeQueue).filter(
+        KnowledgeQueue.organization_id == test_organization.id,
+        KnowledgeQueue.source == source,
+    ).first() is None
+
+    # This is the exact user flow: delete, then crawl the same URL again.
+    readd = client.post("/api/v1/knowledge/add/urls", json={
+        "org_id": str(test_organization.id),
+        "agent_id": str(test_agent.id),
+        "websites": [source],
+    })
+    assert readd.status_code == 200
+    assert "error" not in readd.json()
+    assert len(readd.json()["queue_items"]) == 1
 
 # Negative test cases
 

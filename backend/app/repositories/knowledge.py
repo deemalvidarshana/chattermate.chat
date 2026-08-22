@@ -22,6 +22,7 @@ from sqlalchemy.sql import text
 import logging
 from uuid import UUID
 from app.models.knowledge_to_agent import KnowledgeToAgent
+from app.models.knowledge_queue import KnowledgeQueue
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,15 @@ class KnowledgeRepository:
                 text("DELETE FROM knowledge_to_agents WHERE knowledge_id = :kid"),
                 {"kid": knowledge_id}
             )
+
+            # Completed/failed queue rows are processing history, but retaining
+            # them after the source itself is deleted leaves stale DB state and
+            # makes a later re-crawl look like the old source still exists in
+            # queue/status views. A full source delete removes that history too.
+            self.db.query(KnowledgeQueue).filter(
+                KnowledgeQueue.organization_id == knowledge.organization_id,
+                KnowledgeQueue.source == knowledge.source,
+            ).delete(synchronize_session=False)
 
             # If table_name and schema exist, delete the actual data
             if knowledge.table_name and knowledge.schema:

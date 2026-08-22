@@ -176,6 +176,21 @@ def ensure_nonempty_message(response_content: ChatResponse) -> ChatResponse:
     return response_content
 
 
+def ensure_openrouter_safe_message(response_content: ChatResponse) -> ChatResponse:
+    """Prevent failed OpenRouter structured payloads leaking into the widget."""
+    message = (response_content.message or "").lstrip()
+    if message.startswith("{") or message.startswith("```json"):
+        logger.error("OpenRouter returned malformed structured output; hiding raw JSON from the customer")
+        return ChatResponse(
+            message="I apologize, but I couldn't generate a valid response. Please try again.",
+            transfer_to_human=False,
+            end_chat=False,
+            request_rating=False,
+            create_ticket=False,
+        )
+    return response_content
+
+
 def _salvage_groq_answer_text(response) -> str | None:
     """The last assistant text produced during the run.
 
@@ -450,6 +465,8 @@ class ChatAgent(ChatAgentMCPMixin):
             self._guardrail_ctx = GuardrailContext(
                 org_name=getattr(organization, "name", None),
                 domain=getattr(organization, "domain", None),
+                business_name=getattr(self.agent_data, "business_name", None) if self.agent_data else None,
+                business_domain=getattr(self.agent_data, "business_domain", None) if self.agent_data else None,
                 agent_type=agent_type.value if hasattr(agent_type, "value") else agent_type,
                 description=getattr(self.agent_data, "description", None) if self.agent_data else None,
                 topic_scope=getattr(self.agent_data, "topic_scope", None) if self.agent_data else None,
@@ -985,6 +1002,8 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 else:
                     response_content = parse_response_content(response)
 
+            if self.model_type.upper() == "OPENROUTER":
+                response_content = ensure_openrouter_safe_message(response_content)
             response_content = ensure_nonempty_message(response_content)
             logger.debug(f"Response content: {response_content}")
 
@@ -1384,6 +1403,8 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 # clear anything the LLM may have produced.
                 response_content.request_contact = False
 
+                if self.model_type.upper() == "OPENROUTER":
+                    response_content = ensure_openrouter_safe_message(response_content)
                 response_content = ensure_nonempty_message(response_content)
                 logger.debug(f"Response content: {response_content}")
 
@@ -1514,7 +1535,13 @@ Keep your responses concise and focused. Provide clear, actionable information i
             return error_response
 
     @staticmethod
-    async def test_api_key(api_key: str, model_type: str, model_name: str) -> bool:
+    async def test_api_key(
+        api_key: str,
+        model_type: str,
+        model_name: str,
+        *,
+        raise_on_error: bool = False,
+    ) -> bool:
         """Test if the API key is valid for the given model type.
         
         Args:
@@ -1530,8 +1557,15 @@ Keep your responses concise and focused. Provide clear, actionable information i
         """
         try:
             from app.utils.agno_utils import test_model_api_key
-            return await test_model_api_key(api_key, model_type, model_name)
+            return await test_model_api_key(
+                api_key,
+                model_type,
+                model_name,
+                raise_on_error=raise_on_error,
+            )
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error testing API key: {str(e)}")
+            if raise_on_error:
+                raise
             return False

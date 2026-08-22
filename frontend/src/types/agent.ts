@@ -20,6 +20,8 @@ export interface Agent {
   id: string // UUID
   name: string
   display_name: string | null
+  business_name?: string | null
+  business_domain?: string | null
   description: string | null
   agent_type: string
   instructions: string[]
@@ -58,6 +60,8 @@ export type AgentResponse = Agent
 // Add AgentUpdate type for update operations
 export interface AgentUpdate {
   display_name?: string | null
+  business_name?: string | null
+  business_domain?: string | null
   instructions?: string[]
   is_active?: boolean
   transfer_to_human?: boolean

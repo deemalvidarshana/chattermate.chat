@@ -107,14 +107,14 @@ function askDeleteSource(source: ExplorerSource) {
       action: () => ex.deleteSource(source),
     }
   } else if (props.mode === 'agent') {
-    // In an agent's tab, "Remove" detaches the source from this agent but keeps
-    // it in the organization's knowledge — it does not delete the source.
+    // The trash action is a real delete in both views. Agent-only unlinking is
+    // still available explicitly from the "Link existing" picker.
     confirmState.value = {
-      title: 'Remove from agent',
-      message: `Remove “${source.name}” from this agent? It stays in your organization’s knowledge.`,
-      actionLabel: 'Remove',
-      busyLabel: 'Removing…',
-      action: () => ex.unlinkSource(source.id),
+      title: 'Delete source',
+      message: `Delete “${source.name}”, all of its pages, and its links to every agent? This cannot be undone.`,
+      actionLabel: 'Delete',
+      busyLabel: 'Deleting…',
+      action: () => ex.deleteSource(source),
     }
   } else {
     confirmState.value = {

@@ -83,6 +83,8 @@ class JiraRepository:
                 id=agent.id,
                 name=agent.name,
                 display_name=agent.display_name,
+                business_name=agent.business_name,
+                business_domain=agent.business_domain,
                 description=agent.description,
                 instructions=agent.instructions,
                 tools=tools_list,
@@ -113,4 +115,4 @@ class JiraRepository:
             return agent_data
         except Exception as e:
             logger.error(f"Error getting agent with Jira config: {str(e)}")
-            return None 
+            return None

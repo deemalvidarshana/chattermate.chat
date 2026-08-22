@@ -49,6 +49,8 @@ class AgentBase(BaseModel):
     use_workflow: bool = False
     active_workflow_id: Optional[UUID] = None
     display_name: Optional[str] = None
+    business_name: Optional[str] = Field(default=None, max_length=100)
+    business_domain: Optional[str] = Field(default=None, max_length=255)
     allow_attachments: bool = False
     allowed_attachment_types: Optional[List[str]] = Field(
         default=None,
@@ -76,6 +78,8 @@ class AgentCreate(AgentBase):
 
 class AgentUpdate(BaseModel):
     display_name: Optional[str] = None
+    business_name: Optional[str] = Field(default=None, max_length=100)
+    business_domain: Optional[str] = Field(default=None, max_length=255)
     instructions: Optional[List[str]] = None
     is_active: Optional[bool] = None
     transfer_to_human: Optional[bool] = None
@@ -125,6 +129,8 @@ class AgentResponse(BaseModel):
     id: UUID
     name: str
     display_name: Optional[str]
+    business_name: Optional[str] = None
+    business_domain: Optional[str] = None
     description: Optional[str]
     agent_type: AgentType
     instructions: List[str]

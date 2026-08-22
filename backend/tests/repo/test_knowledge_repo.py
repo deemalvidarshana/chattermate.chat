@@ -18,6 +18,7 @@ import pytest
 from app.repositories.knowledge import KnowledgeRepository
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
+from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.models.agent import Agent, AgentType
 from uuid import uuid4
 
@@ -246,6 +247,14 @@ def test_delete_with_data(knowledge_repo, test_knowledge, test_agent, db):
         agent_id=test_agent.id
     )
     db.add(link)
+    queue_item = KnowledgeQueue(
+        organization_id=test_knowledge.organization_id,
+        agent_id=test_agent.id,
+        source_type="pdf_file",
+        source=test_knowledge.source,
+        status=QueueStatus.COMPLETED,
+    )
+    db.add(queue_item)
     db.commit()
 
     success = knowledge_repo.delete_with_data(test_knowledge.id)
@@ -259,4 +268,12 @@ def test_delete_with_data(knowledge_repo, test_knowledge, test_agent, db):
     link = db.query(KnowledgeToAgent).filter(
         KnowledgeToAgent.knowledge_id == test_knowledge.id
     ).first()
-    assert link is None 
+    assert link is None
+
+    # Full deletion also clears stale processing history, so the same source
+    # can be added and crawled again without an "already exists" conflict.
+    queue_row = db.query(KnowledgeQueue).filter(
+        KnowledgeQueue.organization_id == test_knowledge.organization_id,
+        KnowledgeQueue.source == test_knowledge.source,
+    ).first()
+    assert queue_row is None

@@ -15,8 +15,8 @@ limitations under the License.
 """
 
 import os
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
-from typing import List, Union
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Query
+from typing import List, Optional, Union
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User, UserGroup
@@ -204,6 +204,8 @@ async def create_agent(
             id=agent.id,
             name=agent.name,
             display_name=agent.display_name,
+            business_name=agent.business_name,
+            business_domain=agent.business_domain,
             description=agent.description,
             agent_type=agent.agent_type,
             instructions=agent.instructions,
@@ -305,6 +307,8 @@ async def update_agent(
             id=agent.id,
             name=agent.name,
             display_name=agent.display_name,
+            business_name=agent.business_name,
+            business_domain=agent.business_domain,
             description=agent.description,
             agent_type=agent.agent_type,
             instructions=agent.instructions,
@@ -366,6 +370,7 @@ async def get_agent_roster(
 
 @router.get("/guardrail-default")
 async def get_guardrail_default(
+    agent_id: Optional[UUID] = Query(default=None),
     auth_info: dict = Depends(
         require_any_unified_permission("view_agents", "manage_agents")),
     db: Session = Depends(get_db)
@@ -382,7 +387,16 @@ async def get_guardrail_default(
     org = db.query(Organization).filter(
         Organization.id == auth_info["organization_id"]
     ).first()
-    label = (org.name or "").strip() if org else ""
+    agent = None
+    if agent_id:
+        agent = AgentRepository(db).get_agent_in_org(
+            agent_id, auth_info["organization_id"]
+        )
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+    label = (agent.business_name or "").strip() if agent else ""
+    if not label:
+        label = (org.name or "").strip() if org else ""
     return {"prompt": DEFAULT_GUARDRAIL_PROMPT.replace("{org}", label or "this business")}
 
 
@@ -411,6 +425,8 @@ async def get_organization_agents(
                 id=agent.id,
                 name=agent.name,
                 display_name=agent.display_name,
+                business_name=agent.business_name,
+                business_domain=agent.business_domain,
                 description=agent.description,
                 agent_type=agent.agent_type,
                 instructions=agent.instructions,
@@ -605,6 +621,8 @@ async def update_agent_groups(
             id=agent.id,
             name=agent.name,
             display_name=agent.display_name,
+            business_name=agent.business_name,
+            business_domain=agent.business_domain,
             description=agent.description,
             agent_type=agent.agent_type,
             instructions=agent.instructions,

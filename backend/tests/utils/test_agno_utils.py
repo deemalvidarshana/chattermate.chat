@@ -86,6 +86,39 @@ class TestCreateModel:
             )
             assert result == mock_model
 
+    def test_create_model_openrouter(self):
+        """OpenRouter uses the OpenAI-compatible API with its own base URL."""
+        with patch("app.utils.agno_utils.OpenAIChat") as mock_openai:
+            mock_model = MagicMock()
+            mock_openai.return_value = mock_model
+
+            result = agno_utils.create_model(
+                model_type="OPENROUTER",
+                api_key="sk-or-test",
+                model_name="openai/gpt-oss-20b:free",
+                max_tokens=2000,
+                response_format={"type": "json_object"},
+            )
+
+            mock_openai.assert_called_once_with(
+                api_key="sk-or-test",
+                id="openai/gpt-oss-20b:free",
+                max_tokens=2000,
+                base_url="https://openrouter.ai/api/v1",
+                default_headers={
+                    "HTTP-Referer": agno_utils.settings.FRONTEND_URL,
+                    "X-OpenRouter-Title": "ChatterMate",
+                },
+                request_params={
+                    "extra_body": {
+                        "provider": {"require_parameters": True},
+                        "plugins": [{"id": "response-healing"}],
+                    }
+                },
+                response_format={"type": "json_object"},
+            )
+            assert result == mock_model
+
     def test_create_model_anthropic(self):
         """Test creating Anthropic model"""
         # Mock the import statement inside the function
@@ -387,6 +420,19 @@ class TestModelApiKey:
             assert result is False
 
     @pytest.mark.asyncio
+    async def test_test_model_api_key_can_preserve_provider_error(self):
+        """API setup can distinguish a retired model from an invalid key."""
+        provider_error = Exception("model_not_found")
+        with patch("app.utils.agno_utils.create_model", side_effect=provider_error):
+            with pytest.raises(Exception, match="model_not_found"):
+                await agno_utils.test_model_api_key(
+                    "valid-key",
+                    "GROQ",
+                    "retired-model",
+                    raise_on_error=True,
+                )
+
+    @pytest.mark.asyncio
     async def test_test_model_api_key_agent_creation_failure(self):
         """Test API key validation when agent creation fails"""
         with patch("app.utils.agno_utils.create_model") as mock_create_model, \
@@ -523,4 +569,4 @@ class TestEdgeCases:
             result = await agno_utils.test_model_api_key("", "", "")
 
             mock_create_model.assert_called_once_with("", "", "")
-            assert result is True 
+            assert result is True

@@ -16,9 +16,9 @@ limitations under the License.
 
 import pytest
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from app.models.user import User
 from app.models.ai_config import AIConfig, AIModelType
 from app.models.role import Role
@@ -132,10 +132,24 @@ def client(db, test_user) -> TestClient:
     return TestClient(app)
 
 # Mock for ChatAgent.test_api_key
-async def mock_test_api_key(api_key: str, model_type: str, model_name: str) -> bool:
+async def mock_test_api_key(
+    api_key: str,
+    model_type: str,
+    model_name: str,
+    *,
+    raise_on_error: bool = False,
+) -> bool:
     """Mock implementation of test_api_key"""
     if api_key == "invalid_key":
-        raise Exception("Invalid API key")
+        if raise_on_error:
+            raise Exception("invalid_api_key: Invalid API key")
+        return False
+    elif api_key == "model_unavailable":
+        if raise_on_error:
+            raise Exception(
+                f"model_not_found: The model `{model_name}` does not exist or you do not have access to it."
+            )
+        return False
     elif api_key == "failed_validation":
         return False
     return True
@@ -194,7 +208,23 @@ def test_setup_ai_invalid_key(client, db, test_user):
     assert response.status_code == 400
     data = response.json()
     assert "error" in data["detail"]
-    assert data["detail"]["type"] == "api_key_validation_error"
+    assert data["detail"]["type"] == "invalid_api_key"
+
+
+def test_setup_ai_reports_unavailable_model_separately_from_invalid_key(client, db, test_user):
+    config_data = {
+        "model_type": "GROQ",
+        "model_name": "llama-3.1-8b-instant",
+        "api_key": "model_unavailable",
+    }
+
+    response = client.post("/api/ai/setup", json=config_data)
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["type"] == "model_not_found"
+    assert detail["error"] == "Model unavailable"
+    assert "openai/gpt-oss-20b" in detail["details"]
 
 def test_setup_ai_failed_validation(client, db, test_user):
     """Test AI setup with failed API key validation"""
@@ -283,6 +313,24 @@ def test_setup_ai_groq(client, db, test_user):
     assert data["config"]["model_type"] == "GROQ"
     assert data["config"]["model_name"] == "llama-3.3-70b-versatile"
 
+
+@patch("app.api.ai_setup._validate_openrouter_capabilities", new_callable=AsyncMock)
+def test_setup_ai_openrouter(mock_capabilities, client, db, test_user):
+    """OpenRouter is accepted and persisted as an organization-scoped provider."""
+    config_data = {
+        "model_type": "OPENROUTER",
+        "model_name": "nvidia/nemotron-3-super-120b-a12b:free",
+        "api_key": "test_valid_key",
+    }
+
+    response = client.post("/api/ai/setup", json=config_data)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["config"]["model_type"] == "OPENROUTER"
+    assert data["config"]["model_name"] == "nvidia/nemotron-3-super-120b-a12b:free"
+    mock_capabilities.assert_awaited_once()
+
 @patch.dict(os.environ, {
     'CHATTERMATE_API_KEY': 'test_chattermate_key',
     'CHATTERMATE_MODEL_NAME': 'gpt-4o-mini'
@@ -349,7 +397,7 @@ def test_get_providers(client, db, test_user):
     data = response.json()
     providers = {p["value"]: p for p in data["providers"]}
     # Newly enabled providers are present alongside OpenAI/Groq
-    for expected in ("OPENAI", "GROQ", "ANTHROPIC", "GOOGLE", "MISTRAL", "XAI", "DEEPSEEK"):
+    for expected in ("OPENAI", "GROQ", "OPENROUTER", "ANTHROPIC", "GOOGLE", "MISTRAL", "XAI", "DEEPSEEK"):
         assert expected in providers, f"{expected} missing from /providers"
     # ChatterMate (managed) is not a user-selectable BYO-key provider
     assert "CHATTERMATE" not in providers
@@ -359,9 +407,57 @@ def test_get_providers(client, db, test_user):
     assert openai["custom_allowed"] is True
     assert len(openai["models"]) > 0
     assert all("value" in m and "label" in m for m in openai["models"])
+    groq_model_ids = {m["value"] for m in providers["GROQ"]["models"]}
+    assert "openai/gpt-oss-20b" in groq_model_ids
+    assert "llama-3.1-8b-instant" not in groq_model_ids
+    assert "llama-3.3-70b-versatile" not in groq_model_ids
+    openrouter_model_ids = {m["value"] for m in providers["OPENROUTER"]["models"]}
+    assert "nvidia/nemotron-3-super-120b-a12b:free" in openrouter_model_ids
+    assert "openai/gpt-oss-20b:free" not in openrouter_model_ids
     # Every provider exposes a console URL for obtaining an API key
     for p in data["providers"]:
         assert p["api_key_url"].startswith("https://"), f"{p['value']} missing api_key_url"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_capability_check_accepts_agent_compatible_model():
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "data": {"supported_parameters": ["tools", "structured_outputs", "response_format"]}
+    }
+    http_client = AsyncMock()
+    http_client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = http_client
+
+    with patch("app.api.ai_setup.httpx.AsyncClient", return_value=context):
+        await ai_setup_router._validate_openrouter_capabilities(
+            "sk-or-test", "vendor/compatible-model:free"
+        )
+
+    requested_url = http_client.get.await_args.args[0]
+    assert requested_url.endswith("vendor/compatible-model%3Afree")
+
+
+@pytest.mark.asyncio
+async def test_openrouter_capability_check_rejects_model_without_structured_outputs():
+    response = MagicMock(status_code=200)
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"data": {"supported_parameters": ["tools", "response_format"]}}
+    http_client = AsyncMock()
+    http_client.get.return_value = response
+    context = AsyncMock()
+    context.__aenter__.return_value = http_client
+
+    with patch("app.api.ai_setup.httpx.AsyncClient", return_value=context):
+        with pytest.raises(HTTPException) as exc_info:
+            await ai_setup_router._validate_openrouter_capabilities(
+                "sk-or-test", "vendor/incompatible-model"
+            )
+
+    assert exc_info.value.detail["type"] == "incompatible_model"
+    assert "structured JSON output" in exc_info.value.detail["details"]
 
 def test_get_ai_config_success(client, db, test_user, test_ai_config):
     """Test getting AI configuration"""
@@ -430,10 +526,11 @@ def test_update_ai_config_without_api_key(client, db, test_user, test_ai_config)
     }
     
     original_encrypted_key = test_ai_config.encrypted_api_key
-    response = client.put(
-        "/api/ai/config",
-        json=update_data
-    )
+    with patch("app.api.ai_setup.decrypt_api_key", return_value="test_valid_key"):
+        response = client.put(
+            "/api/ai/config",
+            json=update_data
+        )
 
     assert response.status_code == 200
     data = response.json()
@@ -456,8 +553,7 @@ def test_update_ai_config_failed_validation(client, db, test_user, test_ai_confi
     )
     assert response.status_code == 400
     data = response.json()
-    # The mock returns False, which triggers the InvalidAPI exception that gets caught and re-raised as validation error
-    assert data["detail"]["type"] == "api_key_validation_error"
+    assert data["detail"]["type"] == "invalid_api_key"
 
 def test_update_ai_config_validation_exception(client, db, test_user, test_ai_config):
     """Test update AI config with validation exception"""
@@ -473,7 +569,7 @@ def test_update_ai_config_validation_exception(client, db, test_user, test_ai_co
     )
     assert response.status_code == 400
     data = response.json()
-    assert data["detail"]["type"] == "api_key_validation_error"
+    assert data["detail"]["type"] == "invalid_api_key"
 
 @patch.dict(os.environ, {
     'CHATTERMATE_API_KEY': 'test_chattermate_key',
