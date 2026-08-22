@@ -34,6 +34,10 @@ from agno.document.reader.website_reader import WebsiteReader
 from app.core.logger import get_logger
 from app.knowledge.crawl4ai_fallback import get_crawl4ai_fallback
 from app.knowledge.content_summarizer import get_content_summarizer
+from app.knowledge.content_processing import (
+    clean_knowledge_text,
+    split_knowledge_text,
+)
 from app.knowledge.crawl_scope import (
     DEFAULT_CRAWL_SCOPE,
     CrawlScope,
@@ -221,6 +225,10 @@ class EnhancedWebsiteReader(WebsiteReader):
         :param soup: The BeautifulSoup object to extract the main content from.
         :return: The main content as a string.
         """
+        # Work on a copy: navigation is boilerplate for indexed content, but the
+        # original DOM is still needed later to discover links for the crawl.
+        soup = deepcopy(soup)
+
         # Remove undesirable elements first
         self._clean_soup(soup)
         
@@ -313,8 +321,9 @@ class EnhancedWebsiteReader(WebsiteReader):
     def _clean_soup(self, soup: BeautifulSoup) -> None:
         """
         Removes undesirable elements from the soup.
-        IMPORTANT: Only remove elements that are truly undesirable (scripts, styles, etc.)
-        Keep structural elements like nav, footer, header, aside as they may contain useful content.
+        Structural site chrome is excluded here. Product/contact links are still
+        discovered from the untouched DOM by ``_extract_links``; indexing the
+        repeated header/footer on every page only pollutes retrieval.
         
         :param soup: The BeautifulSoup object to clean.
         """
@@ -325,9 +334,11 @@ class EnhancedWebsiteReader(WebsiteReader):
             comment.extract()
             removed_count += 1
             
-        # Only remove truly problematic tags (scripts, styles, iframes)
-        # DO NOT remove structural tags like nav, footer, header, aside
-        minimal_blacklist = ['script', 'style', 'noscript', 'iframe', 'head']
+        # Remove executable/non-content tags and repeated site chrome.
+        minimal_blacklist = [
+            'script', 'style', 'noscript', 'iframe', 'head',
+            'nav', 'header', 'footer', 'aside',
+        ]
         for tag in minimal_blacklist:
             elements = soup.find_all(tag)
             removed_count += len(elements)
@@ -393,6 +404,14 @@ class EnhancedWebsiteReader(WebsiteReader):
                 removed_count += len(nav_elements)
                 for element in nav_elements:
                     element.extract()
+
+        # ARIA-labelled chrome is common on component-based sites that do not
+        # use semantic header/footer tags.
+        for role in ('banner', 'contentinfo', 'navigation', 'complementary'):
+            elements = soup.find_all(attrs={'role': role})
+            removed_count += len(elements)
+            for element in elements:
+                element.extract()
         
         # Remove sidebars and widgets - often contain non-essential content
         sidebar_selectors = [
@@ -677,7 +696,9 @@ class EnhancedWebsiteReader(WebsiteReader):
 
                         if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                             logger.info(f"✓ Crawl4AI extracted {len(crawl4ai_content)} chars (vs {len(content) if content else 0} from BeautifulSoup)")
-                            content = crawl4ai_content
+                            content = self._content_from_browser_result(
+                                current_url, crawl4ai_content, crawl4ai_soup
+                            )
                             soup = crawl4ai_soup if crawl4ai_soup else soup
                         elif crawl4ai_soup:
                             # Try to extract from crawl4ai soup
@@ -737,7 +758,9 @@ class EnhancedWebsiteReader(WebsiteReader):
                             
                             if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                                 logger.info(f"✓ Crawl4AI successfully extracted {len(crawl4ai_content)} chars")
-                                content = crawl4ai_content
+                                content = self._content_from_browser_result(
+                                    current_url, crawl4ai_content, crawl4ai_soup
+                                )
                                 soup = crawl4ai_soup if crawl4ai_soup else soup
                             elif crawl4ai_soup:
                                 # Try to extract from crawl4ai soup
@@ -828,7 +851,9 @@ class EnhancedWebsiteReader(WebsiteReader):
                     
                     if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                         logger.info(f"✓ Crawl4AI successfully bypassed error and extracted {len(crawl4ai_content)} chars")
-                        content = crawl4ai_content
+                        content = self._content_from_browser_result(
+                            current_url, crawl4ai_content, crawl4ai_soup
+                        )
                         soup = crawl4ai_soup if crawl4ai_soup else soup
                         
                         # Extract links if we got content
@@ -1057,6 +1082,74 @@ class EnhancedWebsiteReader(WebsiteReader):
         logger.info(f"Extracted {len(links)} valid links from {base_url}")
         return links
 
+    def _content_from_browser_result(
+        self,
+        page_url: str,
+        raw_content: str,
+        soup: Optional[BeautifulSoup],
+    ) -> str:
+        """Prefer browser-rendered main DOM content over its full-page markdown.
+
+        Crawl4AI's markdown is useful as a fallback, but it can include every
+        navigation and footer link.  When rendered HTML is available, run it
+        through the same main-content extraction as the regular HTTP path.
+        """
+        if soup is not None:
+            self._current_url = page_url
+            extracted = self._extract_main_content(soup)
+            if extracted and len(extracted) >= self.min_content_length:
+                return extracted
+        return raw_content
+
+    def _prepare_content(self, page_url: str, content: str) -> tuple[str, int]:
+        """Clean and optionally summarize one crawled page before chunking."""
+        original_length = len(content or "")
+        content = clean_knowledge_text(content)
+        try:
+            summarizer = get_content_summarizer()
+            summarized = summarizer.summarize(content, page_url)
+            if len(summarized) < len(content):
+                logger.info(
+                    f"Content summarized: {len(content)} -> {len(summarized)} chars "
+                    f"({100 * len(summarized) / max(1, len(content)):.1f}%)"
+                )
+            content = clean_knowledge_text(summarized)
+        except Exception as e:
+            logger.error(f"Error during content summarization: {str(e)}")
+        return content, original_length
+
+    def _create_documents_from_content(
+        self,
+        page_url: str,
+        content: str,
+        source_url: str,
+        page_index: int,
+    ) -> List[Document]:
+        """Create bounded vector documents for one page.
+
+        IDs retain the existing page grouping convention: the first chunk is
+        ``page_url`` and later chunks are ``page_url_1``, ``page_url_2`` … .
+        Knowledge Explorer edit/delete logic therefore continues to treat the
+        chunks as one page.
+        """
+        prepared, original_length = self._prepare_content(page_url, content)
+        chunks = split_knowledge_text(prepared)
+        documents: List[Document] = []
+        for chunk_index, chunk in enumerate(chunks):
+            metadata = {
+                "url": page_url,
+                "page": page_index,
+                "chunk": chunk_index + 1,
+                "chunk_count": len(chunks),
+                "chunk_size": len(chunk),
+                "original_size": original_length,
+            }
+            document = Document(content=chunk, meta_data=metadata)
+            document.id = page_url if chunk_index == 0 else f"{page_url}_{chunk_index}"
+            document.name = source_url
+            documents.append(document)
+        return documents
+
     def _create_document_from_content(self, page_url: str, content: str, source_url: str, index: int) -> Document:
         """
         Create a Document object from page content with proper metadata.
@@ -1085,38 +1178,16 @@ class EnhancedWebsiteReader(WebsiteReader):
             path = path.strip("/")
             path = re.sub(r'[^\w\-]', '_', path)
 
-        # Summarize content if enabled to reduce token usage
-        original_length = len(content)
-        try:
-            summarizer = get_content_summarizer()
-            content = summarizer.summarize(content, page_url)
-            if len(content) < original_length:
-                logger.info(f"Content summarized: {original_length} -> {len(content)} chars ({100*len(content)/original_length:.1f}%)")
-        except Exception as e:
-            logger.error(f"Error during content summarization: {str(e)}")
-            # Continue with original content if summarization fails
-
-        # Create metadata with relevant information
-        metadata = {
-            "url": page_url,
-            "chunk": index,
-            "chunk_size": len(content),
-            "original_size": original_length
-        }
-
-        # Create document with content and metadata
-        document = Document(
-            content=content,
-            meta_data=metadata
+        # Backwards-compatible single-document helper used by sitemap/tests.
+        # Normal website ingestion uses ``_create_documents_from_content``.
+        documents = self._create_documents_from_content(
+            page_url, content, source_url, index
         )
-
-        # Set document ID and name
+        if documents:
+            return documents[0]
+        document = Document(content="", meta_data={"url": page_url, "chunk": 0})
         document.id = page_url
-        # Set name to full page URL for matching with knowledge_queue
         document.name = source_url
-
-
-
         return document
 
     def read(self, url: str, vector_db_callback: Optional[Callable[[Document], None]] = None, url_crawled_callback: Optional[Callable[[str], None]] = None) -> List[Document]:
@@ -1137,20 +1208,25 @@ class EnhancedWebsiteReader(WebsiteReader):
         logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting to read from {url} with parallel processing")
         
         documents = []
+        page_counter = 0
         
         # Create a callback for immediate document processing
         def on_document_created(page_url: str, content: str):
-            index = len(documents) + 1
-            document = self._create_document_from_content(page_url, content, url, index)
-            documents.append(document)
-            
-            # Call vector DB callback if provided
+            nonlocal page_counter
+            page_counter += 1
+            page_documents = self._create_documents_from_content(
+                page_url, content, url, page_counter
+            )
+            documents.extend(page_documents)
+
+            # Call vector DB callback for every chunk if provided.
             if vector_db_callback:
-                try:
-                    vector_db_callback(document)
-                    logger.info(f"✓ Document {document.id} successfully sent to vector DB")
-                except Exception as e:
-                    logger.error(f"Error sending document {document.id} to vector DB: {str(e)}")
+                for document in page_documents:
+                    try:
+                        vector_db_callback(document)
+                        logger.info(f"✓ Document {document.id} successfully sent to vector DB")
+                    except Exception as e:
+                        logger.error(f"Error sending document {document.id} to vector DB: {str(e)}")
         
         # Crawl website with the callback for immediate document processing
         self.crawl(url, on_document_callback=on_document_created, on_url_crawled_callback=url_crawled_callback)
@@ -1159,4 +1235,4 @@ class EnhancedWebsiteReader(WebsiteReader):
         duration = end_time - start_time
         logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed reading from {url} - Created {len(documents)} documents (Total time: {duration:.2f}s)")
         
-        return documents 
+        return documents

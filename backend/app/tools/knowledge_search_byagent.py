@@ -24,7 +24,16 @@ from app.repositories.knowledge import KnowledgeRepository
 from agno.knowledge.agent import AgentKnowledge
 from agno.vectordb.pgvector import PgVector, SearchType
 from agno.embedder.fastembed import FastEmbedEmbedder
+from app.knowledge.content_processing import select_relevant_passage
 from uuid import UUID
+
+
+MAX_SEARCH_DOCUMENTS = 5
+MAX_PASSAGE_CHARS = 400
+# Groq's 8k TPM calculation includes the requested completion budget. Keep the
+# tool turn compact enough to coexist with the platform prompt and short chat
+# history instead of merely staying below the model context window.
+MAX_TOOL_RESULT_CHARS = 1200
 
 class KnowledgeSearchByAgent(Toolkit):
     def __init__(self, agent_id: str, org_id: UUID, source: str = None):
@@ -38,6 +47,8 @@ class KnowledgeSearchByAgent(Toolkit):
         # Structured citations for the most recent turn: list of {"name", "type"}.
         # Read (and reset) by the chat agent after each run to attach to the response.
         self.collected_sources: List[Dict[str, str]] = []
+        self._searches_this_turn = 0
+        self.last_result: str | None = None
 
         # NOTE: this used to export the org's key as OPENAI_API_KEY for agno's
         # old default OpenAI embedder. Search now uses the local FastEmbed
@@ -47,12 +58,26 @@ class KnowledgeSearchByAgent(Toolkit):
         self.agent_knowledge = None
         self.register(self.search_knowledge_base)
 
+    def reset_turn(self) -> None:
+        """Reset per-user-message search state and citation collection."""
+        self._searches_this_turn = 0
+        self.collected_sources = []
+        self.last_result = None
+
     def search_knowledge_base(self, query: str) -> str:
         """Use this function to search the knowledge base for information about a query.
 
         Args:
             query: The query to search for.
         """
+        if self._searches_this_turn >= 1:
+            logger.warning("Blocked duplicate knowledge search in the same user turn")
+            return (
+                "Knowledge search already completed for this turn. Use the results "
+                "already provided and answer the visitor now; do not search again."
+            )
+        self._searches_this_turn += 1
+
         try:
             logger.debug(f"Searching knowledge base for query: {query}")
             
@@ -93,14 +118,15 @@ class KnowledgeSearchByAgent(Toolkit):
                     filters["name"] = self.source
                 logger.debug(f"Search filters: {filters}")
 
-                # Search with filters - reduced from 5 to 3 documents for faster retrieval
-                # Only retrieve what we actually use to minimize database query time
+                # Retrieve a few candidates. Newly indexed websites are already
+                # chunked; legacy sources may still return a whole page and are
+                # reduced to one query-relevant passage below.
                 documents = self.agent_knowledge.search(
                     query=query,
-                    num_documents=3,  # Reduced from 5 to 3 since we only use top 3 anyway
+                    num_documents=MAX_SEARCH_DOCUMENTS,
                     filters=filters
                 )
-                logger.debug(f"Documents: {documents}")
+                logger.debug(f"Knowledge search returned {len(documents)} candidate document(s)")
 
                 search_results = []
                 for doc in documents:
@@ -110,11 +136,19 @@ class KnowledgeSearchByAgent(Toolkit):
                             (source.source_type.value.lower() for source in knowledge_sources if source.source == doc.name),
                             'unknown'
                         )
+                        passage = select_relevant_passage(
+                            doc.content, query, max_chars=MAX_PASSAGE_CHARS
+                        )
+                        if not passage:
+                            continue
+                        raw_meta_data = getattr(doc, 'meta_data', None)
+                        meta_data = raw_meta_data if isinstance(raw_meta_data, dict) else {}
+                        page_name = meta_data.get('url') or doc.name or 'Untitled'
                         search_results.append({
-                            'content': doc.content,
+                            'content': passage,
                             'source_type': source_type,
-                            'name': doc.name or 'Untitled',
-                            'similarity': doc.score if hasattr(doc, 'score') else 0.0
+                            'name': page_name,
+                            'similarity': (doc.score if hasattr(doc, 'score') else 0.0) or 0.0
                         })
 
                 if not search_results:
@@ -123,10 +157,31 @@ class KnowledgeSearchByAgent(Toolkit):
                 # Sort by similarity and format results
                 search_results.sort(key=lambda x: x['similarity'], reverse=True)
 
-                # Record structured citations (deduped by name+type) so the chat agent
-                # can surface them to the widget.
-                seen = {(s['name'], s['type']) for s in self.collected_sources}
+                # Keep the tool payload below provider context/TPM limits. This
+                # budget includes headings and applies even to legacy full-page
+                # vector rows, so existing knowledge works immediately without
+                # waiting for a recrawl.
+                formatted_results = []
+                included_results = []
+                used_chars = 0
+                seen_passages = set()
                 for result in search_results:
+                    normalized = " ".join(result['content'].lower().split())
+                    if normalized in seen_passages:
+                        continue
+                    seen_passages.add(normalized)
+                    prefix = f"[{result['source_type'].upper()} - {result['name']}] "
+                    remaining = MAX_TOOL_RESULT_CHARS - used_chars - len(prefix)
+                    if remaining <= 100:
+                        break
+                    item = prefix + result['content'][:remaining]
+                    formatted_results.append(item)
+                    included_results.append(result)
+                    used_chars += len(item) + 2
+
+                # Record only citations whose passages were actually returned.
+                seen = {(s['name'], s['type']) for s in self.collected_sources}
+                for result in included_results:
                     key = (result['name'], result['source_type'])
                     if key not in seen:
                         seen.add(key)
@@ -134,14 +189,12 @@ class KnowledgeSearchByAgent(Toolkit):
                             'name': result['name'],
                             'type': result['source_type'],
                         })
-
-                # Return all results (already limited to 3)
-                formatted_results = []
-                for result in search_results:
-                    formatted_results.append(
-                        f"[{result['source_type'].upper()} - {result['name']}] {result['content']}")
-                logger.debug(f"Formatted results: {formatted_results}")
-                return "\n\n".join(formatted_results)
+                logger.debug(
+                    f"Formatted {len(formatted_results)} knowledge passage(s), "
+                    f"{used_chars} chars total"
+                )
+                self.last_result = "\n\n".join(formatted_results)
+                return self.last_result
 
         except Exception as e:
             logger.error(f"Error searching knowledge base: {str(e)}")

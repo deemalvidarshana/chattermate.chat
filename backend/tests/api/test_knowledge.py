@@ -946,6 +946,47 @@ def test_replace_page_upserts_before_deleting(monkeypatch):
     assert "commit" in calls
 
 
+def test_rechunk_source_converts_legacy_page_to_grouped_chunks(monkeypatch):
+    """Existing one-row pages are re-embedded using the same grouped IDs as new crawls."""
+    from types import SimpleNamespace
+    from app.knowledge import page_editor
+
+    knowledge = SimpleNamespace(
+        schema="ai", table_name="d_test", source="https://site.test",
+        organization_id=uuid4(), agent_links=[],
+    )
+    legacy = SimpleNamespace(
+        id="https://site.test/plans",
+        content=" ".join(f"Plan sentence {i} contains useful benefits." for i in range(180)),
+        meta_data={"url": "https://site.test/plans"},
+    )
+    rows_result = MagicMock()
+    rows_result.fetchall.return_value = [legacy]
+    db = MagicMock()
+    db.execute.return_value = rows_result
+
+    manager = MagicMock()
+    manager.vector_db.embedder = object()
+    monkeypatch.setattr(page_editor, "get_manager", lambda org_id: manager)
+
+    def fake_embed(_manager, source, doc_id, content, meta_data):
+        return SimpleNamespace(
+            id=doc_id, name=source, content=content, meta_data=meta_data, embedding=[0.1]
+        )
+
+    monkeypatch.setattr(page_editor, "embed_document", fake_embed)
+
+    result = page_editor.rechunk_source(db, knowledge)
+
+    docs = manager.vector_db.upsert.call_args.args[0]
+    assert result["pages_rechunked"] == 1
+    assert len(docs) > 1
+    assert docs[0].id == "https://site.test/plans"
+    assert docs[1].id == "https://site.test/plans_1"
+    assert all(len(doc.content) <= 1800 for doc in docs)
+    db.commit.assert_called_once()
+
+
 # Test cases for crawl-scope (max_links) on add/urls
 def test_add_urls_crawl_scope_clamps_max_links(client: TestClient, test_organization, db):
     """A website queued with max_links=1 ('this page only') records that cap."""

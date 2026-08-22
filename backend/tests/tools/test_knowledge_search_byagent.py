@@ -17,6 +17,7 @@ limitations under the License.
 import pytest
 from unittest.mock import patch, MagicMock
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
+from app.tools.knowledge_search_byagent import MAX_TOOL_RESULT_CHARS
 from app.models.knowledge import Knowledge, SourceType
 from uuid import uuid4
 from agno.knowledge.agent import AgentKnowledge
@@ -440,6 +441,54 @@ def test_real_search_knowledge_base_with_results():
         # Assert
         assert "test.pdf" in result
         assert "Test content" in result
+
+
+def test_real_search_bounds_legacy_full_page_payload():
+    """A legacy one-row web page never sends tens of thousands of chars to the LLM."""
+    agent_id = str(uuid4())
+    org_id = uuid4()
+    with patch('app.tools.knowledge_search_byagent.SessionLocal') as session_local, \
+         patch('app.tools.knowledge_search_byagent.KnowledgeRepository') as repo_cls:
+        session_local.return_value.__enter__.return_value = MagicMock()
+        knowledge = MagicMock()
+        knowledge.source = "https://example.com"
+        knowledge.source_type = SourceType.WEBSITE
+        repo_cls.return_value.get_by_agent.return_value = [knowledge]
+
+        doc = MagicMock()
+        doc.name = knowledge.source
+        doc.meta_data = {"url": "https://example.com/pricing"}
+        doc.content = (
+            "Navigation link https://example.com/menu " * 500
+            + " Pricing plans start at LKR 1,000 per month with family coverage. "
+            + "Footer link https://example.com/footer " * 500
+        )
+        doc.score = 0.9
+
+        tool = KnowledgeSearchByAgent(agent_id=agent_id, org_id=org_id)
+        tool.agent_knowledge = MagicMock()
+        tool.agent_knowledge.search.return_value = [doc]
+
+        result = tool.search_knowledge_base("pricing plans family coverage")
+
+        assert "LKR 1,000" in result
+        assert len(result) <= MAX_TOOL_RESULT_CHARS
+        assert "https://example.com/pricing" in result
+
+
+def test_duplicate_search_in_same_turn_is_blocked_without_querying_again():
+    tool = KnowledgeSearchByAgent(agent_id=str(uuid4()), org_id=uuid4())
+    tool.agent_knowledge = MagicMock()
+    tool._searches_this_turn = 1
+
+    result = tool.search_knowledge_base("search again")
+
+    assert "already completed" in result
+    tool.agent_knowledge.search.assert_not_called()
+
+    tool.reset_turn()
+    assert tool._searches_this_turn == 0
+    assert tool.collected_sources == []
 
 
 def test_real_search_knowledge_base_no_ai_config():

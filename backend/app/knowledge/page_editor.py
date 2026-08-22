@@ -27,6 +27,7 @@ endpoints previously duplicated inline, so editing a chunk, adding a sub-page an
 replacing a whole page all go through one code path.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -36,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
 from app.knowledge.knowledge_base import KnowledgeManager
+from app.knowledge.content_processing import split_knowledge_text
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.repositories.knowledge import KnowledgeRepository
@@ -301,3 +303,108 @@ def insert_subpage(
         "org_id": str(knowledge.organization_id),
     }
     manager.vector_db.insert([doc], filters=filters)
+
+
+def rechunk_source(
+    db: Session,
+    knowledge: Knowledge,
+    *,
+    force: bool = False,
+    page_id: Optional[str] = None,
+) -> Dict[str, int]:
+    """Re-embed legacy full-page rows as bounded chunks.
+
+    The vector-store upsert happens before stale rows are deleted, so an
+    embedding/provider failure leaves the original page intact. Sources already
+    carrying the new ``chunk_count`` metadata are skipped, making the operation
+    safe to resume.
+    """
+    rows = db.execute(
+        text(
+            f'SELECT id, content, meta_data FROM {knowledge.schema}."{knowledge.table_name}" '
+            'WHERE name = :source ORDER BY id ASC'
+        ),
+        {"source": knowledge.source},
+    ).fetchall()
+    grouped: Dict[str, List[Any]] = {}
+    for row in rows:
+        row_page_id = re.sub(r"_[0-9]+$", "", row.id)
+        if page_id is None or row_page_id == page_id:
+            grouped.setdefault(row_page_id, []).append(row)
+
+    manager = get_manager(knowledge.organization_id)
+    agent_ids = agent_ids_for(knowledge)
+    filters = {
+        "name": knowledge.source,
+        "agent_id": agent_ids,
+        "org_id": str(knowledge.organization_id),
+    }
+    pages_rechunked = 0
+    chunks_written = 0
+
+    for page_id, page_rows in grouped.items():
+        if not force and page_rows and all(
+            isinstance(row.meta_data, dict) and row.meta_data.get("chunk_count")
+            for row in page_rows
+        ):
+            continue
+
+        def row_order(row: Any) -> int:
+            if row.id == page_id:
+                return 0
+            match = re.search(r"_([0-9]+)$", row.id)
+            return int(match.group(1)) if match else 0
+
+        ordered = sorted(page_rows, key=row_order)
+        combined = "\n\n".join((row.content or "").strip() for row in ordered if row.content)
+        chunks = split_knowledge_text(combined)
+        if not chunks:
+            continue
+
+        base_meta = dict(ordered[0].meta_data or {}) if ordered else {}
+        base_meta["url"] = base_meta.get("url") or page_id
+        base_meta["agent_id"] = agent_ids
+        new_docs: List[Document] = []
+        keep_ids = set()
+        for index, chunk in enumerate(chunks):
+            chunk_id = page_id if index == 0 else f"{page_id}_{index}"
+            metadata = {
+                **base_meta,
+                "chunk": index + 1,
+                "chunk_count": len(chunks),
+                "chunk_size": len(chunk),
+                "original_size": len(combined),
+            }
+            new_docs.append(
+                embed_document(manager, knowledge.source, chunk_id, chunk, metadata)
+            )
+            keep_ids.add(chunk_id)
+
+        manager.vector_db.upsert(new_docs, filters=filters)
+
+        # Upsert made every replacement durable; now remove obsolete surplus
+        # chunks left by the legacy page layout.
+        stale_ids = [row.id for row in page_rows if row.id not in keep_ids]
+        for stale_id in stale_ids:
+            db.execute(
+                text(
+                    f'DELETE FROM {knowledge.schema}."{knowledge.table_name}" '
+                    'WHERE id = :chunk_id AND name = :source'
+                ),
+                {"chunk_id": stale_id, "source": knowledge.source},
+            )
+        db.commit()
+        pages_rechunked += 1
+        chunks_written += len(new_docs)
+
+    logger.info(
+        "Rechunked source '%s': %d page(s), %d chunk(s)",
+        knowledge.source,
+        pages_rechunked,
+        chunks_written,
+    )
+    return {
+        "pages_rechunked": pages_rechunked,
+        "chunks_written": chunks_written,
+        "pages_total": len(grouped),
+    }

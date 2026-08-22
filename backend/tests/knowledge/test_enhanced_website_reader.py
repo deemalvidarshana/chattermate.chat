@@ -163,10 +163,27 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         # Check that sidebar elements are removed
         self.assertIsNone(soup_copy.find(class_='sidebar'))
         
-        # Check that main content elements are kept (header and footer may contain some content)
-        self.assertIsNotNone(soup_copy.find('header'))
-        self.assertIsNotNone(soup_copy.find('footer'))
+        # Repeated site chrome is excluded from every indexed page.
+        self.assertIsNone(soup_copy.find('header'))
+        self.assertIsNone(soup_copy.find('footer'))
         self.assertIsNotNone(soup_copy.find('main'))
+
+    def test_large_page_is_split_into_bounded_grouped_chunks(self):
+        content = " ".join(
+            f"Sentence {i} describes a customer plan and its benefits."
+            for i in range(180)
+        )
+
+        documents = self.reader._create_documents_from_content(
+            "https://example.com/plans", content, "https://example.com", 1
+        )
+
+        self.assertGreater(len(documents), 1)
+        self.assertEqual(documents[0].id, "https://example.com/plans")
+        self.assertEqual(documents[1].id, "https://example.com/plans_1")
+        self.assertTrue(all(len(doc.content) <= 1800 for doc in documents))
+        self.assertTrue(all(doc.name == "https://example.com" for doc in documents))
+        self.assertTrue(all(doc.meta_data["chunk_count"] == len(documents) for doc in documents))
         
     def test_canonical_url(self):
         """Fragments/trailing slashes are stripped so page variants collapse."""
@@ -396,4 +413,4 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main() 
+    unittest.main()

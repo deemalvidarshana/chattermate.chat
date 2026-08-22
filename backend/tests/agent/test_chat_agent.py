@@ -34,6 +34,46 @@ from unittest.mock import patch, MagicMock
 from agno.storage.base import Storage
 from fastapi import HTTPException
 
+
+@pytest.mark.parametrize("message", [
+    "hi",
+    "Hello!",
+    "thank you",
+    "yes",
+    "person@example.com",
+    "+94 77 123 4567",
+])
+def test_knowledge_prefetch_skips_conversational_values(message):
+    assert ChatAgent._needs_knowledge_prefetch(message) is False
+
+
+@pytest.mark.parametrize("message", [
+    "what services do you provide?",
+    "who is the founder of this?",
+    "how much is the life insurance plan?",
+])
+def test_knowledge_prefetch_routes_business_questions(message):
+    assert ChatAgent._needs_knowledge_prefetch(message) is True
+
+
+def test_groq_prefetch_adds_one_bounded_context():
+    chat_agent = object.__new__(ChatAgent)
+    chat_agent._use_groq_json_tool = True
+    chat_agent.knowledge_tool = MagicMock()
+    chat_agent.knowledge_tool.search_knowledge_base.return_value = "Relevant passage"
+
+    prepared = asyncio.run(
+        chat_agent._prepare_model_message("What services do you provide?")
+    )
+
+    assert prepared.startswith("What services do you provide?")
+    assert "KNOWLEDGE RESULTS" in prepared
+    assert "Relevant passage" in prepared
+    chat_agent.knowledge_tool.search_knowledge_base.assert_called_once_with(
+        "What services do you provide?"
+    )
+
+
 # Create a mock storage class that inherits from AgentStorage
 class MockAgentStorage(Storage):
     def __init__(self, *args, **kwargs):
@@ -452,4 +492,4 @@ async def test_chat_agent_run_timeout(test_organization_id, test_agent, test_use
 
         assert isinstance(response, ChatResponse)
         assert "error" in response.message.lower()
-        assert not response.transfer_to_human 
+        assert not response.transfer_to_human
