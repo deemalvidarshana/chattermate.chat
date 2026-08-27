@@ -411,6 +411,44 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         # Verify that name is the original source URL
         self.assertEqual(documents[0].name, 'https://example.com')
 
+    def test_browser_result_keeps_rich_markdown_when_dom_extraction_is_partial(self):
+        """SPA pages must not lose sibling sections or markdown links."""
+        raw_content = (
+            "# Workspace\n\n"
+            "Useful rendered information. " * 80
+            + "\n\n[View locations](https://example.com/locations)"
+        )
+        soup = BeautifulSoup("<main><section>Short rendered section with enough text to pass the minimum threshold.</section></main>", "html.parser")
+
+        with patch.object(
+            self.reader,
+            '_extract_main_content',
+            return_value='Short rendered section with enough text to pass the minimum threshold.',
+        ):
+            result = self.reader._content_from_browser_result(
+                'https://example.com', raw_content, soup
+            )
+
+        self.assertEqual(result, raw_content)
+        self.assertIn('https://example.com/locations', result)
+
+    def test_browser_result_uses_substantial_main_dom_extraction(self):
+        """Focused DOM text is still preferred when it contains most content."""
+        raw_content = 'Navigation ' * 20 + 'Main facts ' * 80
+        extracted = 'Main facts ' * 75
+        soup = BeautifulSoup('<main>Rendered page</main>', 'html.parser')
+
+        with patch.object(
+            self.reader,
+            '_extract_main_content',
+            return_value=extracted,
+        ):
+            result = self.reader._content_from_browser_result(
+                'https://example.com', raw_content, soup
+            )
+
+        self.assertEqual(result, extracted)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1088,17 +1088,38 @@ class EnhancedWebsiteReader(WebsiteReader):
         raw_content: str,
         soup: Optional[BeautifulSoup],
     ) -> str:
-        """Prefer browser-rendered main DOM content over its full-page markdown.
+        """Choose the most useful content returned by the browser fallback.
 
-        Crawl4AI's markdown is useful as a fallback, but it can include every
-        navigation and footer link.  When rendered HTML is available, run it
-        through the same main-content extraction as the regular HTTP path.
+        Some JavaScript sites split their useful page across several sibling
+        ``section`` elements.  ``_extract_main_content`` intentionally picks a
+        single likely container, so blindly preferring it can discard most of
+        Crawl4AI's rendered markdown (including useful links).  Keep the main
+        DOM extraction only when it represents a substantial part of the
+        browser result; otherwise retain the richer markdown.
         """
         if soup is not None:
             self._current_url = page_url
             extracted = self._extract_main_content(soup)
-            if extracted and len(extracted) >= self.min_content_length:
-                return extracted
+            raw_length = len((raw_content or "").strip())
+            extracted_length = len((extracted or "").strip())
+            substantial_length = max(
+                self.min_content_length,
+                int(raw_length * 0.30),
+            )
+            if extracted_length >= substantial_length:
+                selected = extracted
+            else:
+                selected = raw_content
+            if extracted_length >= self.min_content_length and raw_length:
+                if selected == raw_content:
+                    logger.info(
+                        "Keeping richer browser markdown for %s (%d chars) "
+                        "instead of partial main DOM extraction (%d chars)",
+                        page_url,
+                        raw_length,
+                        extracted_length,
+                    )
+            return selected
         return raw_content
 
     def _prepare_content(self, page_url: str, content: str) -> tuple[str, int]:

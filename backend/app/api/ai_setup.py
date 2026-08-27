@@ -33,6 +33,7 @@ import os
 
 from app.models.ai_config import AIModelType
 from app.core.model_catalog import is_known_provider, list_providers
+from app.utils.agno_utils import pack_cloudflare_credentials, unpack_cloudflare_credentials
 
 # Try to import enterprise modules
 try:
@@ -47,6 +48,28 @@ logger = get_logger(__name__)
 
 OPENROUTER_MODEL_API = "https://openrouter.ai/api/v1/model"
 OPENROUTER_REQUIRED_PARAMETERS = {"tools", "structured_outputs"}
+
+
+def _cloudflare_settings(account_id: str, gateway_id: str | None) -> dict:
+    account_id = (account_id or "").strip()
+    if len(account_id) != 32 or not all(char in "0123456789abcdefABCDEF" for char in account_id):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid Cloudflare Account ID",
+                "type": "invalid_account_id",
+                "details": "Enter the 32-character hexadecimal Account ID from your Cloudflare dashboard.",
+            },
+        )
+    return {"account_id": account_id, "gateway_id": (gateway_id or "default").strip() or "default"}
+
+
+def _cloudflare_credential(api_token: str, account_id: str, gateway_id: str | None) -> tuple[str, dict]:
+    provider_settings = _cloudflare_settings(account_id, gateway_id)
+    return (
+        pack_cloudflare_credentials(api_token, provider_settings["account_id"], provider_settings["gateway_id"]),
+        provider_settings,
+    )
 
 
 async def _validate_openrouter_capabilities(api_key: str, model_name: str) -> None:
@@ -300,9 +323,18 @@ async def setup_ai(
         # Live-validate the key+model for any BYO-key provider. Provider errors
         # are classified so a retired model is not mislabeled as a bad key.
         model_type_upper = config_data.model_type.upper()
+        stored_api_key = config_data.api_key.get_secret_value()
+        provider_settings = dict(config_data.settings or {})
+        if model_type_upper == "CLOUDFLARE":
+            stored_api_key, cloudflare_settings = _cloudflare_credential(
+                stored_api_key,
+                config_data.account_id,
+                config_data.gateway_id,
+            )
+            provider_settings.update(cloudflare_settings)
         if is_known_provider(model_type_upper):
             await _validate_provider_model(
-                config_data.api_key.get_secret_value(),
+                stored_api_key,
                 config_data.model_type,
                 config_data.model_name,
             )
@@ -314,8 +346,11 @@ async def setup_ai(
             org_id=current_user.organization_id,
             model_type=config_data.model_type,
             model_name=config_data.model_name,
-            api_key=config_data.api_key.get_secret_value()
+            api_key=stored_api_key
         )
+        ai_config.settings = provider_settings
+        db.commit()
+        db.refresh(ai_config)
 
         # Prepare response
         response = AISetupResponse(
@@ -449,6 +484,32 @@ async def update_ai_config(
             if validation_key is None and current_config.encrypted_api_key:
                 validation_key = decrypt_api_key(current_config.encrypted_api_key)
 
+            updated_settings = dict(current_config.settings or {})
+            if config_data.settings:
+                updated_settings.update(config_data.settings)
+
+            model_type_upper = config_data.model_type.upper()
+            if model_type_upper == "CLOUDFLARE":
+                current_credentials = None
+                if current_config.model_type == AIModelType.CLOUDFLARE and current_config.encrypted_api_key:
+                    try:
+                        current_credentials = unpack_cloudflare_credentials(
+                            decrypt_api_key(current_config.encrypted_api_key)
+                        )
+                    except ValueError:
+                        current_credentials = None
+                token = api_key or (current_credentials or {}).get("api_token")
+                account_id = config_data.account_id or updated_settings.get("account_id") or (current_credentials or {}).get("account_id")
+                gateway_id = config_data.gateway_id or updated_settings.get("gateway_id") or (current_credentials or {}).get("gateway_id") or "default"
+                if not token:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"error": "API token required", "type": "missing_api_key", "details": "Enter a Cloudflare API token."},
+                    )
+                validation_key, cloudflare_settings = _cloudflare_credential(token, account_id, gateway_id)
+                updated_settings.update(cloudflare_settings)
+                api_key = validation_key
+
             if not validation_key:
                 raise HTTPException(
                     status_code=400,
@@ -459,7 +520,6 @@ async def update_ai_config(
                     },
                 )
 
-            model_type_upper = config_data.model_type.upper()
             if is_known_provider(model_type_upper):
                 await _validate_provider_model(
                     validation_key,
@@ -472,7 +532,8 @@ async def update_ai_config(
                 config_id=current_config.id,
                 model_type=config_data.model_type,
                 model_name=config_data.model_name,
-                api_key=api_key
+                api_key=api_key,
+                settings=updated_settings,
             )
             
             logger.info(f"AI config updated for org {current_user.organization_id}")

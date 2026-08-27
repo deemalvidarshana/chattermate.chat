@@ -852,13 +852,13 @@ SUPPORT TICKETS: For an unresolved technical problem or explicit escalation, cal
         if hasattr(self, 'tools') and self.tools:
            all_tools.extend(self.tools)
 
-        # Groq can't combine response_format (JSON mode) with tools, so its native
-        # structured-output path degrades to unreliable prompt-only JSON. For Groq we
-        # instead register a `json` tool (GPT-OSS's own structured-output convention)
-        # and read the ChatResponse from its arguments; other providers keep agno's
-        # native response_model path. See build_groq_response_tool above.
+        # Groq cannot combine response_format with tools, while Cloudflare Gemma 4
+        # currently emits malformed/truncated native structured JSON for this large
+        # schema. Both models support function calling, so use the proven `json`
+        # capture tool for them and read ChatResponse from its arguments. Other
+        # providers keep agno's native response_model path.
         self._groq_json_capture = {}
-        self._use_groq_json_tool = model_type.upper() == 'GROQ'
+        self._use_groq_json_tool = model_type.upper() in {'GROQ', 'CLOUDFLARE'}
         if self._use_groq_json_tool:
             all_tools.append(build_groq_response_tool(self._groq_json_capture))
             system_message = (system_message or "") + _GROQ_JSON_INSTRUCTION

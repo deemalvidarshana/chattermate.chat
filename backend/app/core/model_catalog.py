@@ -47,6 +47,7 @@ class CatalogProvider(TypedDict):
     # Console URL where the user creates/copies their API key for this provider.
     api_key_url: str
     models: List[CatalogModel]
+    credential_fields: List[dict]
 
 
 def _m(value: str, label: str) -> CatalogModel:
@@ -68,6 +69,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("gpt-4o-mini", "GPT-4o Mini"),
             _m("o4-mini", "o4-mini"),
         ],
+        "credential_fields": [],
     },
     "ANTHROPIC": {
         "label": "Anthropic (Claude)",
@@ -81,6 +83,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("claude-sonnet-4-6", "Claude Sonnet 4.6"),
             _m("claude-haiku-4-5", "Claude Haiku 4.5"),
         ],
+        "credential_fields": [],
     },
     "GOOGLE": {
         "label": "Google Gemini",
@@ -94,6 +97,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
             _m("gemini-3.5-flash", "Gemini 3.5 Flash"),
         ],
+        "credential_fields": [],
     },
     "MISTRAL": {
         "label": "Mistral",
@@ -106,6 +110,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("mistral-medium-latest", "Mistral Medium"),
             _m("mistral-small-latest", "Mistral Small"),
         ],
+        "credential_fields": [],
     },
     "XAI": {
         "label": "xAI (Grok)",
@@ -120,6 +125,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("grok-4-fast-non-reasoning", "Grok 4 Fast (Non-Reasoning)"),
             _m("grok-3", "Grok 3"),
         ],
+        "credential_fields": [],
     },
     "DEEPSEEK": {
         "label": "DeepSeek",
@@ -132,6 +138,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("deepseek-chat", "DeepSeek Chat (V3)"),
             _m("deepseek-reasoner", "DeepSeek Reasoner"),
         ],
+        "credential_fields": [],
     },
     "GROQ": {
         "label": "Groq",
@@ -145,6 +152,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("openai/gpt-oss-20b", "GPT-OSS 20B (Recommended)"),
             _m("openai/gpt-oss-120b", "GPT-OSS 120B"),
         ],
+        "credential_fields": [],
     },
     "OPENROUTER": {
         "label": "OpenRouter",
@@ -158,6 +166,30 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
             _m("z-ai/glm-5.2:free", "GLM 5.2 (Free)"),
             _m("openai/gpt-oss-20b", "GPT-OSS 20B"),
             _m("openai/gpt-oss-120b", "GPT-OSS 120B"),
+        ],
+        "credential_fields": [],
+    },
+    "CLOUDFLARE": {
+        "label": "Cloudflare Workers AI",
+        "requires_api_key": True,
+        "custom_allowed": True,
+        "api_key_url": "https://dash.cloudflare.com/?to=/:account/ai/workers-ai",
+        "models": [
+            _m("@cf/google/gemma-4-26b-a4b-it", "Google Gemma 4 26B A4B Instruct"),
+        ],
+        "credential_fields": [
+            {
+                "name": "account_id",
+                "label": "Cloudflare Account ID",
+                "placeholder": "Enter your 32-character Account ID",
+                "required": True,
+            },
+            {
+                "name": "gateway_id",
+                "label": "AI Gateway ID",
+                "placeholder": "default",
+                "required": False,
+            },
         ],
     },
 }
@@ -178,6 +210,7 @@ def list_providers() -> List[dict]:
             "custom_allowed": entry["custom_allowed"],
             "api_key_url": entry["api_key_url"],
             "models": entry["models"],
+            "credential_fields": entry.get("credential_fields", []),
         }
         for provider_value, entry in MODEL_CATALOG.items()
     ]

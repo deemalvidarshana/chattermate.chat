@@ -25,10 +25,12 @@ export function useAISetup() {
     provider: string
     model: string
     apiKey: string
+    extraCredentials: Record<string, string>
   }>({
     provider: '',
     model: '',
     apiKey: '',
+    extraCredentials: {},
   })
 
   const hasExistingConfig = ref(false)
@@ -59,7 +61,11 @@ export function useAISetup() {
         model: config.model_name,
         // Secrets are never returned to the browser. Keep this empty so a
         // masked display value can never be submitted back as a real key.
-        apiKey: ''
+        apiKey: '',
+        extraCredentials: {
+          account_id: typeof config.settings?.account_id === 'string' ? config.settings.account_id : '',
+          gateway_id: typeof config.settings?.gateway_id === 'string' ? config.settings.gateway_id : 'default',
+        },
       }
       hasStoredApiKey.value = config.has_api_key
       hasExistingConfig.value = true
@@ -89,6 +95,8 @@ export function useAISetup() {
         model_type: setupConfig.value.provider.toUpperCase(),
         model_name: setupConfig.value.model,
         api_key: setupConfig.value.apiKey,
+        account_id: setupConfig.value.extraCredentials.account_id,
+        gateway_id: setupConfig.value.extraCredentials.gateway_id,
       })
       hasStoredApiKey.value = true
       setupConfig.value.apiKey = ''
@@ -113,6 +121,8 @@ export function useAISetup() {
       if (setupConfig.value.apiKey) {
         payload.api_key = setupConfig.value.apiKey
       }
+      payload.account_id = setupConfig.value.extraCredentials.account_id
+      payload.gateway_id = setupConfig.value.extraCredentials.gateway_id
       await aiService.updateAI(payload)
       if (setupConfig.value.apiKey) {
         hasStoredApiKey.value = true

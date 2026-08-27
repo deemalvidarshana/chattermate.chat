@@ -32,6 +32,7 @@ class AIModelType(str, Enum):
     HUGGINGFACE = "HUGGINGFACE"
     OLLAMA = "OLLAMA"
     XAI = "XAI"
+    CLOUDFLARE = "CLOUDFLARE"
     CHATTERMATE = "CHATTERMATE" # own model for enterprise customers
 
 class AIConfig(Base):

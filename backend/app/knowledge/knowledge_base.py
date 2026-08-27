@@ -141,6 +141,9 @@ class KnowledgeManager:
                         knowledge_base.load,
                         recreate=False,
                         upsert=True,
+                        # A queue item represents an explicit crawl/re-crawl.
+                        # Do not let an older vector row suppress fresh content.
+                        skip_existing=False,
                         filters=filters
                     )
                     self._add_knowledge_source(filename, SourceType.FILE)
@@ -493,6 +496,7 @@ class KnowledgeManager:
                         knowledge_base.load,
                         recreate=False,
                         upsert=True,
+                        skip_existing=False,
                         filters=filters
                     )
                     

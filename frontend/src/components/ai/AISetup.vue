@@ -282,6 +282,7 @@ watch(() => setupConfig.value.provider, () => {
     return
   }
   setupConfig.value.model = ''
+  setupConfig.value.extraCredentials = {}
   useCustomModel.value = false
 })
 
@@ -653,6 +654,29 @@ const chatterMateButtonText = computed(() => {
                       rel="noopener noreferrer"
                       class="key-help-link"
                     >Get your {{ selectedProvider.label }} API key ↗</a></template>
+                  </p>
+                </div>
+
+                <div
+                  v-for="field in selectedProvider?.credential_fields || []"
+                  :key="field.name"
+                  class="form-group"
+                >
+                  <label :for="`provider-${field.name}`">{{ field.label }}</label>
+                  <input
+                    :id="`provider-${field.name}`"
+                    v-model="setupConfig.extraCredentials[field.name]"
+                    type="text"
+                    :required="field.required"
+                    :placeholder="field.placeholder"
+                    class="form-control form-control-mono"
+                    autocomplete="off"
+                  />
+                  <p v-if="field.name === 'account_id'" class="key-hint">
+                    Found in Cloudflare Dashboard → Workers AI → Use REST API.
+                  </p>
+                  <p v-else-if="field.name === 'gateway_id'" class="key-hint">
+                    Optional. Leave as <code>default</code> unless you use a named AI Gateway.
                   </p>
                 </div>
 

@@ -21,12 +21,36 @@ from app.core.config import settings
 from app.utils.agno_patches import apply_agno_patches
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
+import json
 
 logger = get_logger(__name__)
 
 # Every code path that builds an agno model goes through this module, so this
 # is the single choke point where the 1.7.6 runtime patches get applied.
 apply_agno_patches()
+
+
+def pack_cloudflare_credentials(api_token: str, account_id: str, gateway_id: str = "default") -> str:
+    """Serialize Cloudflare credentials for encryption in AIConfig.encrypted_api_key."""
+    return json.dumps({
+        "api_token": api_token,
+        "account_id": account_id,
+        "gateway_id": gateway_id or "default",
+    }, separators=(",", ":"))
+
+
+def unpack_cloudflare_credentials(value: str) -> Dict[str, str]:
+    try:
+        credentials = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Cloudflare credentials are incomplete; save the configuration again") from exc
+    if not isinstance(credentials, dict) or not credentials.get("api_token") or not credentials.get("account_id"):
+        raise ValueError("Cloudflare API token and Account ID are required")
+    return {
+        "api_token": str(credentials["api_token"]),
+        "account_id": str(credentials["account_id"]),
+        "gateway_id": str(credentials.get("gateway_id") or "default"),
+    }
 
 def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int = 1000, response_format: Optional[Dict[str, Any]] = None) -> Any:
     """
@@ -80,6 +104,32 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
             if response_format:
                 openrouter_kwargs["response_format"] = response_format
             return OpenAIChat(**openrouter_kwargs)
+        elif model_type == 'CLOUDFLARE':
+            credentials = unpack_cloudflare_credentials(api_key)
+            cloudflare_kwargs = {
+                "api_key": credentials["api_token"],
+                "id": model_name,
+                # Gemma 4 has built-in thinking. For ChatterMate's short-form
+                # helpers it can spend the whole completion budget thinking and
+                # return empty content. Disable template-level thinking; the
+                # generic OpenAI reasoning_effort flag is ignored by this model.
+                "max_completion_tokens": max_tokens,
+                "request_params": {
+                    "extra_body": {
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    }
+                },
+                "base_url": (
+                    "https://api.cloudflare.com/client/v4/accounts/"
+                    f"{credentials['account_id']}/ai/v1"
+                ),
+                "default_headers": {
+                    "cf-aig-gateway-id": credentials["gateway_id"],
+                },
+            }
+            if response_format:
+                cloudflare_kwargs["response_format"] = response_format
+            return OpenAIChat(**cloudflare_kwargs)
         elif model_type == 'ANTHROPIC':
             from agno.models.anthropic import Claude
             return Claude(api_key=api_key, id=model_name, max_tokens=max_tokens)

@@ -801,7 +801,9 @@ async def generate_instructions(
             model_type=model_type,
             api_key=api_key,
             model_name=model_name,
-            max_tokens=800
+            # Reasoning models use part of this budget before producing the
+            # visible answer. 800 tokens could therefore yield empty content.
+            max_tokens=2000
         )
         
         generator = AgnoAgent(
@@ -821,6 +823,16 @@ async def generate_instructions(
         
         # Parse response to get instructions list
         response_text = response.content if hasattr(response, 'content') else str(response)
+        if not isinstance(response_text, str) or not response_text.strip():
+            logger.error(
+                "Instruction model %s (%s) returned no final answer",
+                model_name,
+                model_type,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="The AI model used its response budget without producing instructions. Please try again."
+            )
         
         # Split the response into separate instructions
         instructions = []

@@ -21,6 +21,8 @@ export interface AIConfig {
   model_type: string;
   model_name: string;
   api_key?: string;
+  account_id?: string;
+  gateway_id?: string;
 }
 
 export const aiService = {

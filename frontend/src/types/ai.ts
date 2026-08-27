@@ -26,6 +26,12 @@ export interface AIProvider {
   custom_allowed: boolean
   api_key_url: string
   models: AIModel[]
+  credential_fields: Array<{
+    name: string
+    label: string
+    placeholder: string
+    required: boolean
+  }>
 }
 
 export interface AIConfig {

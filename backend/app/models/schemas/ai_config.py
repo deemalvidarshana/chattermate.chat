@@ -24,6 +24,8 @@ class AIConfigBase(BaseModel):
     model_type: AIModelType
     model_name: str
     settings: Optional[Dict] = {}
+    account_id: Optional[str] = None
+    gateway_id: Optional[str] = None
 
 
 class AIConfigCreate(AIConfigBase):
@@ -35,6 +37,8 @@ class AIConfigUpdate(BaseModel):
     model_name: Optional[str] = None
     api_key: Optional[SecretStr] = None
     settings: Optional[Dict] = None
+    account_id: Optional[str] = None
+    gateway_id: Optional[str] = None
 
 
 class AIConfigResponse(BaseModel):

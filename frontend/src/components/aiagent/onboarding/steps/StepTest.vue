@@ -81,6 +81,16 @@ const stopKnowledgePoll = () => {
 const ensureWidget = async (): Promise<string | null> => {
   if (props.widgetId) return props.widgetId
   try {
+    // A previous create may have committed successfully even if serializing its
+    // response failed (for example while a local DB migration was missing).
+    // Reuse that agent's widget so revisiting Test never creates duplicates.
+    const widgets = await widgetService.getWidgets()
+    const existing = widgets.find(widget => widget.agent_id === props.agentId)
+    if (existing) {
+      emit('widget-created', existing.id)
+      return existing.id
+    }
+
     const widget = await widgetService.createWidget({
       name: `${props.agentName} Widget`,
       agent_id: props.agentId,
